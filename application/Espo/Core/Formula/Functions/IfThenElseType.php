@@ -29,31 +29,25 @@
 
 namespace Espo\Core\Formula\Functions;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class IfThenElseType extends Base
+class IfThenElseType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return true;
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error('Value for \'IfThenElse\' item is not array.');
+        if ($this->evaluate($args[0])) {
+            return $this->evaluate($args[1]);
         }
 
-        if (count($item->value) < 2) {
-             throw new Error('Bad value for \'IfThenElse\' item.');
-        }
-
-        if ($this->evaluate($item->value[0])) {
-            return $this->evaluate($item->value[1]);
-        } else {
-            if (count($item->value) > 2) {
-                return $this->evaluate($item->value[2]);
-            }
+        if (count($args) > 2) {
+            return $this->evaluate($args[2]);
         }
     }
 }

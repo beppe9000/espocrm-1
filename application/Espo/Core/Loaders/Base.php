@@ -29,11 +29,17 @@
 
 namespace Espo\Core\Loaders;
 
-abstract class Base implements \Espo\Core\Interfaces\Loader
-{
-    private $container;
+use Espo\Core\Container;
 
-    public function __construct(\Espo\Core\Container $container)
+/**
+ * @deprecated
+ * @todo Remove in 6.4.
+ */
+abstract class Base implements Loader
+{
+    protected $container;
+
+    public function __construct(Container $container)
     {
         $this->container = $container;
     }

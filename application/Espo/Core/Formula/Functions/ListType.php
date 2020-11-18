@@ -29,23 +29,18 @@
 
 namespace Espo\Core\Formula\Functions;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class ListType extends Base
+class ListType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
         $result = [];
-        foreach ($item->value as $item) {
+
+        foreach ($args as $item) {
             $result[] = $this->evaluate($item);
         }
 

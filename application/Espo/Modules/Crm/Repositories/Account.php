@@ -31,9 +31,9 @@ namespace Espo\Modules\Crm\Repositories;
 
 use Espo\ORM\Entity;
 
-class Account extends \Espo\Core\ORM\Repositories\RDB
+class Account extends \Espo\Core\Repositories\Database
 {
-    public function afterSave(Entity $entity, array $options = array())
+    public function afterSave(Entity $entity, array $options = [])
     {
         parent::afterSave($entity, $options);
 
@@ -41,25 +41,4 @@ class Account extends \Espo\Core\ORM\Repositories\RDB
         	$this->relate($entity, 'targetLists', $entity->get('targetListId'));
         }
     }
-
-    protected function afterRelateContacts(Entity $entity, $foreign, $data, array $options = array())
-    {
-        if (!($foreign instanceof Entity)) return;
-
-        if (!$foreign->get('accountId')) {
-            $foreign->set('accountId', $entity->id);
-            $this->getEntityManager()->saveEntity($foreign);
-        }
-    }
-
-    protected function afterUnrelateContacts(Entity $entity, $foreign, array $options = array())
-    {
-        if (!($foreign instanceof Entity)) return;
-
-        if ($foreign->get('accountId') && $foreign->get('accountId') === $entity->id) {
-            $foreign->set('accountId', null);
-            $this->getEntityManager()->saveEntity($foreign);
-        }
-    }
 }
-

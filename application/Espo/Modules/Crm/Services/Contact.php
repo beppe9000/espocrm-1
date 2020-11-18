@@ -29,11 +29,10 @@
 
 namespace Espo\Modules\Crm\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
 class Contact extends \Espo\Core\Templates\Services\Person
 {
-
     protected $readOnlyAttributeList = [
         'inboundEmailId',
         'portalUserId'
@@ -43,29 +42,20 @@ class Contact extends \Espo\Core\Templates\Services\Person
         'title'
     ];
 
-    protected $linkSelectParams =[
-        'targetLists' => [
-            'additionalColumns' => [
-                'optedOut' => 'isOptedOut'
-            ]
-        ],
-        'opportunities' => [
-            'additionalColumns' => [
-                'role' => 'contactRole'
-            ]
-        ]
+    protected $linkMandatorySelectAttributeList = [
+        'targetLists' => ['isOptedOut'],
     ];
 
     protected $mandatorySelectAttributeList = [
         'accountId',
-        'accountName'
+        'accountName',
     ];
 
     protected function afterCreateEntity(Entity $entity, $data)
     {
         if (!empty($data->emailId)) {
             $email = $this->getEntityManager()->getEntity('Email', $data->emailId);
-            if ($email && !$email->get('parentId')) {
+            if ($email && !$email->get('parentId') && $this->getAcl()->check($email)) {
                 if ($this->getConfig()->get('b2cMode') || !$entity->get('accountId')) {
                     $email->set([
                         'parentType' => 'Contact',

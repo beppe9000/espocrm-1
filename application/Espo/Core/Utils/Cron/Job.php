@@ -29,11 +29,16 @@
 
 namespace Espo\Core\Utils\Cron;
 
+use Espo\Core\{
+    CronManager,
+    Utils\Config,
+    ORM\EntityManager,
+    Utils\System,
+};
+
 use PDO;
-use Espo\Core\CronManager;
-use Espo\Core\Utils\Config;
-use Espo\Core\ORM\EntityManager;
-use Espo\Core\Utils\System;
+
+use DateTime;
 
 class Job
 {
@@ -70,12 +75,22 @@ class Job
         return $this->cronScheduledJob;
     }
 
-    public function isJobPending($id)
+    public function isJobPending(string $id) : bool
     {
-        return !!$this->getEntityManager()->getRepository('Job')->select(['id'])->where([
-            'id' => $id,
-            'status' => CronManager::PENDING
-        ])->findOne();
+        $job = $this->getEntityManager()
+            ->getRepository('Job')
+            ->select(['id', 'status'])
+            ->where([
+                'id' => $id,
+            ])
+            ->forUpdate()
+            ->findOne();
+
+        if (!$job) {
+            return false;
+        }
+
+        return $job->get('status') === CronManager::PENDING;
     }
 
     public function getPendingJobList($queue = null, $limit = 0)
@@ -108,81 +123,66 @@ class Job
         return $this->getEntityManager()->getRepository('Job')->find($selectParams);
     }
 
-    public function isScheduledJobRunning($scheduledJobId, $targetId = null, $targetType = null)
+    public function isScheduledJobRunning(string $scheduledJobId, ?string $targetId = null, ?string $targetType = null) : bool
     {
         $where = [
             'scheduledJobId' => $scheduledJobId,
             'status' => [CronManager::RUNNING, CronManager::READY],
         ];
+
         if ($targetId && $targetType) {
             $where['targetId'] = $targetId;
             $where['targetType'] = $targetType;
         }
-        return !!$this->getEntityManager()->getRepository('Job')->select(['id'])->where($where)->findOne();
+
+        return (booL) $this->getEntityManager()->getRepository('Job')
+            ->select(['id'])
+            ->where($where)
+            ->findOne();
     }
 
-    public function getRunningScheduledJobIdList()
+    public function getRunningScheduledJobIdList() : array
     {
         $list = [];
 
-        $pdo = $this->getEntityManager()->getPDO();
+        $jobList = $this->getEntityManager()->getRepository('Job')
+            ->select(['scheduledJobId'])
+            ->where([
+                'status' => ['Running', 'Ready'],
+                'scheduledJobId!=' => null,
+                'targetId=' => null,
+            ])
+            ->order('executeTime')
+            ->find();
 
-        $query = "
-            SELECT scheduled_job_id FROM job
-            WHERE
-                (`status` = 'Running' OR `status` = 'Ready') AND
-                scheduled_job_id IS NOT NULL AND
-                target_id IS NULL AND
-                deleted = 0
-            ORDER BY execute_time
-        ";
-        $sth = $pdo->prepare($query);
-        $sth->execute();
-
-        $rowList = $sth->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($rowList as $row) {
-            $list[] = $row['scheduled_job_id'];
+        foreach ($jobList as $job) {
+            $list[] = $job->get('scheduledJobId');
         }
 
         return $list;
     }
 
-    /**
-     *
-     * @param  string $scheduledJobId
-     * @param  string $time
-     *
-     * @return array
-     */
-    public function getJobByScheduledJobIdOnMinute($scheduledJobId, $time)
+    public function hasScheduledJobOnMinute(string $scheduledJobId, string $time) : bool
     {
-        $dateObj = new \DateTime($time);
+        $dateObj = new DateTime($time);
         $timeWithoutSeconds = $dateObj->format('Y-m-d H:i:');
 
-        $pdo = $this->getEntityManager()->getPDO();
+        $job = $this->getEntityManager()->getRepository('Job')
+            ->select(['id'])
+            ->where([
+                'scheduledJobId' => $scheduledJobId,
+                'executeTime*' => $timeWithoutSeconds . '%',
+            ])
+            ->findOne();
 
-        $query = "
-            SELECT * FROM job
-            WHERE
-                scheduled_job_id = ".$pdo->quote($scheduledJobId)."
-                AND execute_time LIKE ". $pdo->quote($timeWithoutSeconds . '%') . "
-                AND deleted = 0
-            LIMIT 1
-        ";
-
-        $sth = $pdo->prepare($query);
-        $sth->execute();
-
-        $scheduledJob = $sth->fetchAll(PDO::FETCH_ASSOC);
-
-        return $scheduledJob;
+        return (bool) $job;
     }
 
-    public function getPendingCountByScheduledJobId($scheduledJobId)
+    public function getPendingCountByScheduledJobId(string $scheduledJobId) : int
     {
         $countPending = $this->getEntityManager()->getRepository('Job')->where([
             'scheduledJobId' => $scheduledJobId,
-            'status' => CronManager::PENDING
+            'status' => CronManager::PENDING,
         ])->count();
 
         return $countPending;
@@ -211,7 +211,7 @@ class Job
             'startedAt'
         ])->where([
             'status' => CronManager::RUNNING,
-            'startedAt<' => $dateTimeThreshold
+            'startedAt<' => $dateTimeThreshold,
         ])->find();
 
         $failedJobList = [];
@@ -239,7 +239,7 @@ class Job
             'startedAt',
         ])->where([
             'status' => CronManager::READY,
-            'startedAt<' => $dateTimeThreshold
+            'startedAt<' => $dateTimeThreshold,
         ])->find();
 
         $this->markJobListFailed($failedJobList);
@@ -265,7 +265,7 @@ class Job
             'startedAt'
         ])->where([
             'status' => CronManager::RUNNING,
-            'executeTime<' => $dateTimeThreshold
+            'executeTime<' => $dateTimeThreshold,
         ])->find();
 
         $failedJobList = [];
@@ -287,139 +287,128 @@ class Job
         if (!count($jobList)) return;
 
         $jobIdList = [];
+
         foreach ($jobList as $job) {
             $jobIdList[] = $job->id;
         }
 
-        $quotedIdList = [];
-        foreach ($jobIdList as $id) {
-            $quotedIdList[] = $this->getEntityManager()->getPDO()->quote($id);
-        }
+        $updateQuery = $this->getEntityManager()->getQueryBuilder()
+            ->update()
+            ->in('Job')
+            ->set([
+                'status' => CronManager::FAILED,
+                'attempts' => 0,
+            ])
+            ->where([
+                'id' => $jobIdList,
+            ])
+            ->build();
 
-        $sql = "
-            UPDATE job
-            SET `status` = '" . CronManager::FAILED . "', attempts = 0
-            WHERE id IN (".implode(", ", $quotedIdList).")
-        ";
-
-        $this->getEntityManager()->getPDO()->query($sql);
+        $this->getEntityManager()->getQueryExecutor()->execute($updateQuery);
 
         foreach ($jobList as $job) {
-            if ($job->get('scheduledJobId')) {
-                $this->getCronScheduledJob()->addLogRecord(
-                    $job->get('scheduledJobId'),
-                    CronManager::FAILED,
-                    $job->get('startedAt'),
-                    $job->get('targetId'),
-                    $job->get('targetType')
-                );
+            if (!$job->get('scheduledJobId')) {
+                continue;
             }
+
+            $this->getCronScheduledJob()->addLogRecord(
+                $job->get('scheduledJobId'),
+                CronManager::FAILED,
+                $job->get('startedAt'),
+                $job->get('targetId'),
+                $job->get('targetType')
+            );
         }
     }
 
     /**
-     * Remove pending duplicate jobs, no need to run twice the same job
-     *
-     * @return void
+     * Remove pending duplicate jobs, no need to run twice the same job.
      */
     public function removePendingJobDuplicates()
     {
-        $pdo = $this->getEntityManager()->getPDO();
+        $duplicateJobList = $this->getEntityManager()->getRepository('Job')
+            ->select(['scheduledJobId'])
+            ->where([
+                'scheduledJobId!=' => null,
+                'status' => CronManager::PENDING,
+                'executeTime<=' => date('Y-m-d H:i:s'),
+                'targetId' => null,
+            ])
+            ->groupBy(['scheduledJobId'])
+            ->having([
+                'COUNT:id>' => 1,
+            ])
+            ->order('MAX:executeTime')
+            ->find();
 
-        $query = "
-            SELECT scheduled_job_id
-            FROM job
-            WHERE
-                scheduled_job_id IS NOT NULL AND
-                `status` = '".CronManager::PENDING."' AND
-                execute_time <= '".date('Y-m-d H:i:s')."' AND
-                target_id IS NULL AND
-                deleted = 0
-            GROUP BY scheduled_job_id
-            HAVING count( * ) > 1
-            ORDER BY MAX(execute_time) ASC
-        ";
-        $sth = $pdo->prepare($query);
-        $sth->execute();
-
-        $duplicateJobList = $sth->fetchAll(PDO::FETCH_ASSOC);
-
-        foreach ($duplicateJobList as $row) {
-            if (!empty($row['scheduled_job_id'])) {
-
-                $query = "
-                    SELECT id FROM `job`
-                    WHERE
-                        scheduled_job_id = ".$pdo->quote($row['scheduled_job_id'])."
-                        AND `status` = '" . CronManager::PENDING ."'
-                        ORDER BY execute_time
-                        DESC LIMIT 1, 100000
-                    ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
-                $jobIdList = $sth->fetchAll(PDO::FETCH_COLUMN);
-
-                if (empty($jobIdList)) {
-                    continue;
-                }
-
-                $quotedJobIdList = [];
-                foreach ($jobIdList as $jobId) {
-                    $quotedJobIdList[] = $pdo->quote($jobId);
-                }
-
-                $update = "
-                    UPDATE job
-                    SET deleted = 1
-                    WHERE
-                        id IN (".implode(", ", $quotedJobIdList).")
-                ";
-
-                $sth = $pdo->prepare($update);
-                $sth->execute();
+        $scheduledJobIdList = [];
+        foreach ($duplicateJobList as $duplicateJob) {
+            if (!$duplicateJob->get('scheduledJobId')) {
+                continue;
             }
+            $scheduledJobIdList[] = $duplicateJob->get('scheduledJobId');
+        }
+
+        foreach ($scheduledJobIdList as $scheduledJobId) {
+            $toRemoveJobList = $this->getEntityManager()->getRepository('Job')
+                ->select(['id'])
+                ->where([
+                    'scheduledJobId' => $scheduledJobId,
+                    'status' => CronManager::PENDING,
+                ])
+                ->order('executeTime')
+                ->limit(0, 1000)
+                ->find();
+
+            $jobIdList = [];
+            foreach ($toRemoveJobList as $job) {
+                $jobIdList[] = $job->id;
+            }
+
+            if (!count($jobIdList)) {
+                continue;
+            }
+
+            $delete = $this->entityManager->getQueryBuilder()
+                ->delete()
+                ->from('Job')
+                ->where([
+                    'id' => $jobIdList,
+                ])
+                ->build();
+
+            $this->entityManager->getQueryExecutor()->execute($delete);
         }
     }
 
     /**
-     * Mark job attempts
-     *
-     * @return void
+     * Handle job attempts. Change failed to pending if attempts left.
      */
     public function updateFailedJobAttempts()
     {
-        $query = "
-            SELECT * FROM job
-            WHERE
-                `status` = '" . CronManager::FAILED . "' AND
-                deleted = 0 AND
-                execute_time <= '".date('Y-m-d H:i:s')."' AND
-                attempts > 0
-        ";
+        $jobList = $this->getEntityManager()->getRepository('Job')
+            ->select(['id', 'attempts', 'failedAttempts'])
+            ->where([
+                'status' => CronManager::FAILED,
+                'executeTime<=' => date('Y-m-d H:i:s'),
+                'attempts>' => 0,
+            ])
+            ->find();
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sth = $pdo->prepare($query);
-        $sth->execute();
+        foreach ($jobList as $job) {
+            $failedAttempts = $job->get('failedAttempts') ?? 0;
+            $attempts = $job->get('attempts');
 
-        $rows = $sth->fetchAll(PDO::FETCH_ASSOC);
-        if ($rows) {
-            foreach ($rows as $row) {
-                $row['failed_attempts'] = isset($row['failed_attempts']) ? $row['failed_attempts'] : 0;
+            $attempts = $attempts - 1;
+            $failedAttempts = $failedAttempts + 1;
 
-                $attempts = $row['attempts'] - 1;
-                $failedAttempts = $row['failed_attempts'] + 1;
+            $job->set([
+                'status' => CronManager::PENDING,
+                'attempts' => $attempts,
+                'failedAttempts' => $failedAttempts,
+            ]);
 
-                $update = "
-                    UPDATE job
-                    SET
-                        `status` = '" . CronManager::PENDING ."',
-                        attempts = ".$pdo->quote($attempts).",
-                        failed_attempts = ".$pdo->quote($failedAttempts)."
-                    WHERE
-                        id = ".$pdo->quote($row['id'])."
-                ";
-                $pdo->prepare($update)->execute();
-            }
+            $this->getEntityManager()->saveEntity($job);
         }
     }
 }

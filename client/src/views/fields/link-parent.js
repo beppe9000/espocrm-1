@@ -253,10 +253,6 @@ define('views/fields/link-parent', 'views/fields/base', function (Dep) {
                             e.currentTarget.value = this.model.get(this.nameName);
                         }
                     }.bind(this));
-                } else if (this.mode == 'search') {
-                    this.$elementName.on('blur', function (e) {
-                        e.currentTarget.value = '';
-                    }.bind(this));
                 }
 
                 if (!this.autocompleteDisabled) {
@@ -268,6 +264,11 @@ define('views/fields/link-parent', 'views/fields/base', function (Dep) {
                         paramName: 'q',
                         noCache: true,
                         triggerSelectOnValidInput: false,
+                        beforeRender: function ($c) {
+                            if (this.$elementName.hasClass('input-sm')) {
+                                $c.addClass('small');
+                            }
+                        }.bind(this),
                         formatResult: function (suggestion) {
                             return this.getHelper().escapeString(suggestion.name);
                         }.bind(this),
@@ -317,6 +318,10 @@ define('views/fields/link-parent', 'views/fields/base', function (Dep) {
             if (this.mode == 'search') {
                 var type = this.$el.find('select.search-type').val();
                 this.handleSearchType(type);
+
+                this.$el.find('select.search-type').on('change', function () {
+                    this.trigger('change');
+                }.bind(this));
             }
         },
 

@@ -29,52 +29,41 @@
 
 namespace Espo\Core\Utils;
 
+use Espo\Core\{
+    Exceptions\Error,
+    Utils\Autoload\Loader,
+    Utils\DataCache,
+    Utils\File\Manager as FileManager,
+};
+
+use Exception;
+
 class Autoload
 {
     protected $data = null;
 
-    private $config;
+    protected $cacheKey = 'autoload';
 
-    private $metadata;
-
-    private $fileManager;
-
-    private $loader;
-
-    protected $cacheFile = 'data/cache/application/autoload.php';
-
-    protected $paths = array(
+    protected $paths = [
         'corePath' => 'application/Espo/Resources/autoload.json',
         'modulePath' => 'application/Espo/Modules/{*}/Resources/autoload.json',
         'customPath' => 'custom/Espo/Custom/Resources/autoload.json',
-    );
+    ];
 
-    public function __construct(Config $config, Metadata $metadata, File\Manager $fileManager)
-    {
+    protected $config;
+    protected $metadata;
+    protected $dataCache;
+    protected $fileManager;
+    protected $loader;
+
+    public function __construct(
+        Config $config, Metadata $metadata, DataCache $dataCache, FileManager $fileManager, Loader $loader
+    ) {
         $this->config = $config;
         $this->metadata = $metadata;
+        $this->dataCache = $dataCache;
         $this->fileManager = $fileManager;
-        $this->loader = new \Espo\Core\Utils\Autoload\Loader($config, $fileManager);
-    }
-
-    protected function getConfig()
-    {
-        return $this->config;
-    }
-
-    protected function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
-    }
-
-    protected function getLoader()
-    {
-        return $this->loader;
+        $this->loader = $loader;
     }
 
     public function get($key = null, $returns = null)
@@ -97,18 +86,18 @@ class Autoload
 
     protected function init()
     {
-        if (file_exists($this->cacheFile) && $this->getConfig()->get('useCache')) {
-            $this->data = $this->getFileManager()->getPhpContents($this->cacheFile);
+        $useCache = $this->config->get('useCache');
+
+        if ($useCache && $this->dataCache->has($this->cacheKey)) {
+            $this->data = $this->dataCache->get($this->cacheKey);
+
             return;
         }
 
         $this->data = $this->unify();
 
-        if ($this->getConfig()->get('useCache')) {
-            $result = $this->getFileManager()->putPhpContents($this->cacheFile, $this->data);
-            if ($result == false) {
-                 throw new \Espo\Core\Exceptions\Error('Autoload: Cannot save unified autoload.');
-            }
+        if ($useCache) {
+            $result = $this->dataCache->store($this->cacheKey, $this->data);
         }
     }
 
@@ -116,8 +105,9 @@ class Autoload
     {
         $data = $this->loadData($this->paths['corePath']);
 
-        foreach ($this->getMetadata()->getModuleList() as $moduleName) {
+        foreach ($this->metadata->getModuleList() as $moduleName) {
             $modulePath = str_replace('{*}', $moduleName, $this->paths['modulePath']);
+
             $data = array_merge($data, $this->loadData($modulePath));
         }
 
@@ -126,16 +116,18 @@ class Autoload
         return $data;
     }
 
-    protected function loadData($autoloadFile, $returns = array())
+    protected function loadData($autoloadFile, $returns = [])
     {
         if (file_exists($autoloadFile)) {
-            $content = $this->getFileManager()->getContents($autoloadFile);
+            $content = $this->fileManager->getContents($autoloadFile);
+
             $arrayContent = Json::getArrayData($content);
+
             if (!empty($arrayContent)) {
                 return $this->normalizeData($arrayContent);
             }
 
-            $GLOBALS['log']->error('Autoload::unify() - Empty file or syntax error - ['.$autoloadFile.']');
+            $GLOBALS['log']->error('Autoload: Empty file or syntax error ['.$autoloadFile.'].');
         }
 
         return $returns;
@@ -153,10 +145,12 @@ class Autoload
                 case 'files':
                 case 'autoloadFileList':
                     $normalizedData[$key] = $value;
+
                     break;
 
                 default:
                     $normalizedData['psr-0'][$key] = $value;
+
                     break;
             }
         }
@@ -168,10 +162,11 @@ class Autoload
     {
         try {
             $autoloadList = $this->getAll();
-        } catch (\Exception $e) {} //bad permissions
+        }
+        catch (Exception $e) {} //bad permissions
 
         if (!empty($autoloadList)) {
-            $this->getLoader()->register($autoloadList);
+            $this->loader->register($autoloadList);
         }
     }
 }

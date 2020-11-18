@@ -1,19 +1,10 @@
+<% var hasHiddenPanel = false; %>
+
 <% _.each(layout, function (panel, columnNumber) { %>
+    <% hasHiddenPanel = panel.hidden || hasHiddenPanel; %>
     <div class="panel panel-<%= panel.style %><% if (panel.name) { %>{{#if hiddenPanels.<%= panel.name %>}} hidden{{/if}}<% } %>"<% if (panel.name) print(' data-name="'+panel.name+'"') %>>
-        <%
-            var panelLabelString = null;
-            if ('customLabel' in panel) {
-                if (panel.customLabel) {
-                    panelLabelString = panel.customLabel;
-                }
-            } else {
-                if (panel.label) {
-                    panelLabelString = "{{translate \"" + panel.label + "\" scope=\""+model.name+"\"}}";
-                }
-            }
-        %>
-        <% if (panelLabelString) { %>
-        <div class="panel-heading"><h4 class="panel-title"><%= panelLabelString %></h4></div>
+        <% if (panel.label) { %>
+        <div class="panel-heading"><h4 class="panel-title"><%= panel.label %></h4></div>
         <% } %>
         <div class="panel-body panel-body-form">
 
@@ -77,7 +68,8 @@
                             if ('customLabel' in cell) {
                                 print (cell.customLabel);
                             } else {
-                                print ("{{translate \""+cell.field+"\" scope=\""+model.name+"\" category='fields'}}");
+                                var label = cell.label || cell.field;
+                                print ("{{translate \""+label+"\" scope=\""+model.name+"\" category='fields'}}");
                             }
                         %></span></label><% } %>
                         <div class="field<% if (cell.field) { %>{{#if hiddenFields.<%= cell.field %>}} hidden{{/if}}<% } %>" data-name="<%= cell.field %>"><%
@@ -169,3 +161,15 @@
         </div>
     </div>
 <% }); %>
+
+<%
+if (hasHiddenPanel) {
+%>
+<div class="panel panel-default panels-show-more-delimiter" data-name="showMoreDelimiter">
+    <a href="javascript:" data-action="showMoreDetailPanels" title="{{translate 'Show more'}}">
+        <span class="fas fa-ellipsis-h fa-lg"></span>
+    </a>
+</div>
+<%
+}
+%>

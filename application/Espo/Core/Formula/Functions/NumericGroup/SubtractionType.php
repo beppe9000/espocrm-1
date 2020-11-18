@@ -29,29 +29,26 @@
 
 namespace Espo\Core\Formula\Functions\NumericGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class SubtractionType extends \Espo\Core\Formula\Functions\Base
+class SubtractionType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return '';
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error('Value for \'Subtraction\' item is not array.');
-        }
+        $result = $this->evaluate($args[0]);
+        $part = $this->evaluate($args[1]);
 
-        if (count($item->value) < 2) {
-            throw new Error('Bad value for \'Subtraction\'.');
-        }
-
-        $result = $this->evaluate($item->value[0]);
-        $part = $this->evaluate($item->value[1]);
         if (!is_float($part) && !is_int($part)) {
             $part = floatval($part);
         }
+
         $result -= $part;
 
         return $result;

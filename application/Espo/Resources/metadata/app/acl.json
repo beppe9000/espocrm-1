@@ -65,7 +65,10 @@
                 "parent": false
             },
             "EmailFolder": {
-                "assignedUser": false
+                "assignedUser": {
+                    "read": "yes",
+                    "edit": "no"
+                }
             },
             "Email": {
                 "inboundEmails": false,
@@ -75,6 +78,7 @@
                 "dashboardTemplate": false,
                 "password": false,
                 "passwordConfirm": false,
+                "auth2FA": false,
                 "authMethod": false,
                 "apiKey": false,
                 "secretKey": false,

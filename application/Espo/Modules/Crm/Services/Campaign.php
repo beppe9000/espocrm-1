@@ -29,19 +29,22 @@
 
 namespace Espo\Modules\Crm\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\{
+    Entity,
+    QueryParams\Select,
+};
 
-use \Espo\Core\Exceptions\Error,
-    \Espo\Core\Exceptions\Forbidden,
-    \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error,
+    Espo\Core\Exceptions\Forbidden,
+    Espo\Core\Exceptions\BadRequest;
 
-class Campaign extends \Espo\Services\Record
+use Espo\Core\Di;
+
+class Campaign extends \Espo\Services\Record implements
+
+    Di\DefaultLanguageAware
 {
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('container');
-    }
+    use Di\DefaultLanguageSetter;
 
     protected $entityTypeAddressFieldListMap = [
         'Account' => ['billingAddress', 'shippingAddress'],
@@ -136,41 +139,44 @@ class Campaign extends \Espo\Services\Record
         }
         $entity->set('bouncedPercentage', $bouncedPercentage);
 
-        $leadCreatedCount = $this->getEntityManager()->getRepository('Lead')->where([
-            'campaignId' => $entity->id
-        ])->count();
-        if (!$leadCreatedCount) {
-            $leadCreatedCount = null;
-        }
-        $entity->set('leadCreatedCount', $leadCreatedCount);
-
-        $entity->set('revenueCurrency', $this->getConfig()->get('defaultCurrency'));
-
-        $params = [
-            'select' => ['SUM:amountConverted'],
-            'whereClause' => [
-                'stage' => 'Closed Won',
+        if ($this->getAcl()->check('Lead')) {
+            $leadCreatedCount = $this->getEntityManager()->getRepository('Lead')->where([
                 'campaignId' => $entity->id
-            ],
-            'groupBy' => ['opportunity.campaignId']
-        ];
-
-        $this->getEntityManager()->getRepository('Opportunity')->handleSelectParams($params);
-
-        $sql = $this->getEntityManager()->getQuery()->createSelectQuery('Opportunity', $params);
-
-        $pdo = $this->getEntityManager()->getPDO();
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-
-        $revenue = null;
-        if ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
-            $revenue = floatval($row['SUM:amountConverted']);
-            if (!$revenue) {
-                $revenue = null;
+            ])->count();
+            if (!$leadCreatedCount) {
+                $leadCreatedCount = null;
             }
+            $entity->set('leadCreatedCount', $leadCreatedCount);
         }
-        $entity->set('revenue', $revenue);
+
+        if ($this->getAcl()->check('Opportunity')) {
+            $entity->set('revenueCurrency', $this->getConfig()->get('defaultCurrency'));
+
+            $params = [
+                'from' => 'Opportunity',
+                'select' => ['SUM:amountConverted'],
+                'whereClause' => [
+                    'stage' => 'Closed Won',
+                    'campaignId' => $entity->id
+                ],
+                'groupBy' => ['opportunity.campaignId']
+            ];
+
+            $sql = $this->getEntityManager()->getQueryComposer()->compose(Select::fromRaw($params));
+
+            $pdo = $this->getEntityManager()->getPDO();
+            $sth = $pdo->prepare($sql);
+            $sth->execute();
+
+            $revenue = null;
+            if ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
+                $revenue = floatval($row['SUM:amountConverted']);
+                if (!$revenue) {
+                    $revenue = null;
+                }
+            }
+            $entity->set('revenue', $revenue);
+        }
     }
 
     public function logLeadCreated($campaignId, Entity $target, $actionDate = null, $isTest = false)
@@ -191,8 +197,15 @@ class Campaign extends \Espo\Services\Record
         $this->getEntityManager()->saveEntity($logRecord);
     }
 
-    public function logSent($campaignId, $queueItemId = null, Entity $target, Entity $emailOrEmailTemplate = null, $emailAddress, $actionDate = null, $isTest = false)
-    {
+    public function logSent(
+        string $campaignId,
+        ?string $queueItemId = null,
+        Entity $target,
+        Entity $emailOrEmailTemplate = null,
+        $emailAddress,
+        $actionDate = null,
+        $isTest = false
+    ) {
         if (empty($actionDate)) {
             $actionDate = date('Y-m-d H:i:s');
         }
@@ -370,7 +383,7 @@ class Campaign extends \Espo\Services\Record
         $this->getEntityManager()->saveEntity($logRecord);
     }
 
-    public function generateMailMergePdf($campaignId, $link, $checkAcl = false)
+    public function generateMailMergePdf(string $campaignId, string $link, bool $checkAcl = false)
     {
         $campaign = $this->getEntityManager()->getEntity('Campaign', $campaignId);
 
@@ -417,41 +430,69 @@ class Campaign extends \Espo\Services\Record
         $metTargetHash = [];
         $targetEntityList = [];
 
-        $excludingTargetListList = $campaign->get('excludingTargetLists');
+        $excludingTargetListList = $this->getEntityManager()
+            ->getRepository('Campaign')
+            ->getRelation($campaign, 'excludingTargetLists')
+            ->find();
+
         foreach ($excludingTargetListList as $excludingTargetList) {
-            foreach ($excludingTargetList->get($link) as $excludingTarget) {
-                $hashId = $excludingTarget->getEntityType() . '-'. $excludingTarget->id;
+            $recordList = $this->getEntityManager()
+                ->getRepository('TargetList')
+                ->getRelation($excludingTargetList, $link)
+                ->find();
+
+            foreach ($recordList as $excludingTarget) {
+                $hashId = $excludingTarget->getEntityType() . '-' . $excludingTarget->id;
                 $metTargetHash[$hashId] = true;
             }
         }
 
         $addressFieldList = $this->entityTypeAddressFieldListMap[$targetEntityType];
 
-        $targetListCollection = $campaign->get('targetLists');
+        $targetListCollection = $this->getEntityManager()
+            ->getRepository('Campaign')
+            ->getRelation($campaign, 'targetLists')
+            ->find();
+
         foreach ($targetListCollection as $targetList) {
-            if (!$campaign->get($link . 'TemplateId')) continue;
-            $entityList = $targetList->get($link, [
-                'additionalColumnsConditions' => [
-                    'optedOut' => false
-                ]
-            ]);
+            if (!$campaign->get($link . 'TemplateId')) {
+                continue;
+            }
+
+            $entityList = $this->getEntityManager()
+                ->getRepository('TargetList')
+                ->getRelation($targetList, $link)
+                ->where([
+                    '@relation.optedOut' => false,
+                ])
+                ->find();
+
             foreach ($entityList as $e) {
                 $hashId = $e->getEntityType() . '-'. $e->id;
+
                 if (!empty($metTargetHash[$hashId])) {
                     continue;
                 }
+
                 $metTargetHash[$hashId] = true;
 
                 if ($campaign->get('mailMergeOnlyWithAddress')) {
-                    if (empty($addressFieldList)) continue;
+                    if (empty($addressFieldList)) {
+                        continue;
+                    }
+
                     $hasAddress = false;
+
                     foreach ($addressFieldList as $addressField) {
                         if ($e->get($addressField . 'Street') || $e->get($addressField . 'PostalCode')) {
                             $hasAddress = true;
                             break;
                         }
                     }
-                    if (!$hasAddress) continue;
+
+                    if (!$hasAddress) {
+                        continue;
+                    }
                 }
 
                 $targetEntityList[] = $e;
@@ -462,13 +503,16 @@ class Campaign extends \Espo\Services\Record
             throw new Error("No targets available for mail merge.");
         }
 
-        $filename = $campaign->get('name') . ' - ' . $this->getDefaultLanguage()->translate($targetEntityType, 'scopeNamesPlural');
+        $filename = $campaign->get('name') . ' - ' .
+            $this->getDefaultLanguage()->translate($targetEntityType, 'scopeNamesPlural');
 
-        return $this->getServiceFactory()->create('Pdf')->generateMailMerge($targetEntityType, $targetEntityList, $template, $filename, $campaign->id);
+        return $this->getServiceFactory()->create('Pdf')->generateMailMerge(
+            $targetEntityType, $targetEntityList, $template, $filename, $campaign->id
+        );
     }
 
     protected function getDefaultLanguage()
     {
-        return $this->getInjection('container')->get('defaultLanguage');
+        return $this->defaultLanguage;
     }
 }

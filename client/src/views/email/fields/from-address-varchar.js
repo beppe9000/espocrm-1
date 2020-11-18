@@ -35,9 +35,12 @@ define(
 
         detailTemplate: 'email/fields/email-address-varchar/detail',
 
+        validations: ['required', 'email'],
+
         setup: function () {
-            this.params.required = false;
             Dep.prototype.setup.call(this);
+
+            this.erasedPlaceholder = 'ERASED:';
 
             this.on('render', function () {
                 if (this.mode === 'search') return;
@@ -85,6 +88,16 @@ define(
             if (this.mode == 'search' && this.getAcl().check('Email', 'create')) {
                 EmailAddress.prototype.initSearchAutocomplete.call(this);
             }
+
+            if (this.mode == 'edit' && this.getAcl().check('Email', 'create')) {
+                EmailAddress.prototype.initSearchAutocomplete.call(this);
+            }
+
+            if (this.mode == 'search') {
+                this.$input.on('input', function () {
+                    this.trigger('change');
+                }.bind(this));
+            }
         },
 
         getAutocompleteMaxCount: function () {
@@ -131,19 +144,21 @@ define(
             var entityType = this.typeHash[address] || null;
             var id = this.idHash[address] || null;
 
-            var addressHtml = '<span>' + address + '</span>';
+            var addressHtml = this.getHelper().escapeString(address);
 
             var lineHtml = '';
             if (id) {
-                lineHtml = '<div>' + '<a href="#' + entityType + '/view/' + id + '">' + name + '</a> <span class="text-muted">&#187;</span> ' + addressHtml + '</div>';
+                lineHtml = '<div>' + '<a href="#' + entityType + '/view/' + id + '">' + name +
+                    '</a> <span class="text-muted">&#187;</span> ' + addressHtml + '</div>';
             } else {
                 if (this.getAcl().check('Contact', 'create') || this.getAcl().check('Lead', 'create')) {
                     lineHtml += this.getCreateHtml(address);
                 }
                 if (name) {
-                    lineHtml += '<span>' + name + ' <span class="text-muted">&#187;</span> ' + addressHtml + '</span>';
+                    lineHtml += '<span class="email-address-line">' + name +
+                        ' <span class="text-muted">&#187;</span> <span>' + addressHtml + '</span></span>';
                 } else {
-                    lineHtml += addressHtml;
+                    lineHtml += '<span class="email-address-line">' + addressHtml + '</span>';
                 }
             }
             lineHtml = '<div>' + lineHtml + '</div>';
@@ -360,6 +375,20 @@ define(
             }
 
             return false;
+        },
+
+        validateEmail: function () {
+            var address = this.model.get(this.name);
+            if (!address) return;
+            var addressLowerCase = String(address).toLowerCase();
+
+            var re = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+            if (!re.test(addressLowerCase) && address.indexOf(this.erasedPlaceholder) !== 0) {
+                var msg = this.translate('fieldShouldBeEmail', 'messages').replace('{field}', this.getLabelText());
+                this.showValidationMessage(msg);
+                return true;
+            }
         },
 
     });

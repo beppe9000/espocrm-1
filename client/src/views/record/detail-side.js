@@ -111,7 +111,7 @@ define('views/record/detail-side', 'views/record/panels-container', function (De
                 if (this.recordHelper.getPanelStateParam(p.name, 'hidden') !== null) {
                     item.hidden = this.recordHelper.getPanelStateParam(p.name, 'hidden');
                 } else {
-                    this.recordHelper.setPanelStateParam(p.name, item.hidden || false);
+                    this.recordHelper.setPanelStateParam(p.name, 'hidden', item.hidden || false);
                 }
                 return item;
             }, this);
@@ -149,8 +149,9 @@ define('views/record/detail-side', 'views/record/panels-container', function (De
                         if (this.defaultPanel)
                             this.setupDefaultPanel();
 
-                        if (this.layoutData)
-                            this.alterPanels();
+                        this.alterPanels();
+
+                        this.setupPanelsFinal();
 
                         this.setupPanelViews();
                     }.bind(this)
@@ -158,42 +159,6 @@ define('views/record/detail-side', 'views/record/panels-container', function (De
             );
         },
 
-        alterPanels: function (layoutData) {
-            layoutData = layoutData || this.layoutData || {};
-
-            var newList = [];
-            this.panelList.forEach(function (item, i) {
-                item.index = i;
-                if (item.name) {
-                    var itemData = layoutData[item.name] || {};
-                    if (itemData.disabled) return;
-                    for (var i in itemData) {
-                        item[i] = itemData[i];
-                    }
-                }
-
-                newList.push(item);
-            }, this);
-
-            newList.sort(function (v1, v2) {
-                return v1.index - v2.index;
-            });
-
-            this.panelList = newList;
-
-            if (this.recordViewObject && this.recordViewObject.dynamicLogic) {
-                var dynamicLogic = this.recordViewObject.dynamicLogic;
-                this.panelList.forEach(function (item) {
-                    if (item.dynamicLogicVisible) {
-                        dynamicLogic.addPanelVisibleCondition(item.name, item.dynamicLogicVisible);
-
-                        if (this.recordHelper.getPanelStateParam(item.name, 'hidden')) {
-                            item.hidden = true;
-                        }
-                    }
-                }, this);
-            }
-        },
 
         setupDefaultPanel: function () {
             var met = false;
@@ -216,6 +181,9 @@ define('views/record/detail-side', 'views/record/panels-container', function (De
             if (!defaultPanelDefs) return;
 
             defaultPanelDefs = Espo.Utils.cloneDeep(defaultPanelDefs);
+
+            defaultPanelDefs.view = this.getMetadata().get(['clientDefs', this.scope, 'defaultSidePanelView']) ||
+                defaultPanelDefs.view;
 
             var fieldList = this.getMetadata().get(['clientDefs', this.scope, 'defaultSidePanelFieldLists', this.type]);
 

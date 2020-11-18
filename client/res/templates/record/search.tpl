@@ -29,14 +29,14 @@
             </div>
             {{#unless textFilterDisabled}}<input type="text" class="form-control text-filter" data-name="textFilter" value="{{textFilter}}" tabindex="1" autocomplete="espo-text-search">{{/unless}}
             <div class="input-group-btn">
-                <button type="button" class="btn btn-primary search btn-icon btn-icon-x-wide" data-action="search" title="{{translate 'Search'}}">
+                <button type="button" class="btn btn-default search btn-icon btn-icon-x-wide" data-action="search" title="{{translate 'Search'}}">
                     <span class="fa fa-search"></span>
-                </button>
-                <button type="button" class="btn btn-text btn-icon-wide" data-action="reset" title="{{translate 'Reset'}}">
-                    <span class="fas fa-redo-alt"></span>
                 </button>
                 <button type="button" class="btn btn-text btn-icon-wide dropdown-toggle add-filter-button" data-toggle="dropdown" tabindex="-1">
                     <span class="fas fa-ellipsis-v"></span>
+                </button>
+                <button type="button" class="btn btn-text btn-icon-wide" data-action="reset" title="{{translate 'Reset'}}" style="visibility: hidden;">
+                    <span class="fas fa-times"></span>
                 </button>
                 <ul class="dropdown-menu pull-right filter-list">
                     <li class="dropdown-header">{{translate 'Add Field'}}</li>
@@ -58,11 +58,18 @@
     </div>
 </div>
 
-<div class="advanced-filters-bar" style="margin-bottom: 12px;"></div>
 <div class="advanced-filters hidden grid-auto-fill-sm">
 {{#each filterDataList}}
     <div class="filter filter-{{name}}" data-name="{{name}}">
         {{{var key ../this}}}
     </div>
 {{/each}}
+</div>
+
+<div class="advanced-filters-apply-container{{#unless toShowApplyFiltersButton}} hidden{{/unless}}">
+    <a href="javascript:" class="btn btn-default btn-sm" data-action="applyFilters">
+        <span class="fas fa-search"></span>
+        <span class="text-apply{{#if toShowResetFiltersText}} hidden{{/if}}">{{translate 'Apply'}}</span>
+        <span class="text-reset{{#unless toShowResetFiltersText}} hidden{{/unless}}">{{translate 'Reset'}}</span>
+    </a>
 </div>

@@ -417,16 +417,14 @@ class EmailTest extends \PHPUnit\Framework\TestCase
     {
         $this->entityManager = $this->getMockBuilder('\Espo\Core\ORM\EntityManager')->disableOriginalConstructor()->getMock();
 
-        $this->repository = $this->getMockBuilder('\Espo\Core\ORM\Repositories\RDB')->disableOriginalConstructor()->getMock();
+        $this->repository =
+          $this->getMockBuilder('\Espo\Core\ORM\Repositories\Database')->disableOriginalConstructor()->getMock();
 
         $this->entityManager->expects($this->any())
                             ->method('getRepository')
                             ->will($this->returnValue($this->repository));
 
-
-
-        $this->email = new Email($this->defs, $this->entityManager);
-
+        $this->email = new Email('Email', $this->defs, $this->entityManager);
     }
 
     protected function tearDown() : void
@@ -445,13 +443,13 @@ class EmailTest extends \PHPUnit\Framework\TestCase
                             ->method('getEntity')
                             ->with('Attachment', 'Id01');
 
-
         $this->email->getInlineAttachments();
     }
 
     function testGetBodyForSending()
     {
-        $attachment = new \stdClass();
+        $attachment =
+            $this->getMockBuilder('\Espo\Entities\Attachment')->disableOriginalConstructor()->getMock();
         $attachment->id = 'Id01';
 
         $this->email->set('body', 'test <img src="?entryPoint=attachment&amp;id=Id01">');
@@ -462,13 +460,13 @@ class EmailTest extends \PHPUnit\Framework\TestCase
                             ->will($this->returnValue($attachment));
 
         $body = $this->email->getBodyForSending();
-        $this->assertEquals($body, 'test <img src="cid:Id01">');
+        $this->assertEquals('test <img src="cid:Id01">', $body);
     }
 
     function testBodyPlain()
     {
         $this->email->set('body', '<br />&nbsp;&amp;');
         $bodyPlain = $this->email->getBodyPlain();
-        $this->assertEquals($bodyPlain, "\r\n &");
+        $this->assertEquals("\r\n &", $bodyPlain);
     }
 }

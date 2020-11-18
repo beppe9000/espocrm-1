@@ -29,45 +29,61 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
 
-class UserSecurity extends \Espo\Core\Services\Base
+use Espo\ORM\EntityManager;
+use Espo\Entities\User;
+
+use Espo\Core\{
+    Utils\Metadata,
+    Utils\Config,
+};
+
+use Espo\Core\Authentication\LoginFactory;
+use Espo\Core\Authentication\TwoFactor\UserFactory as TwoFactorUserFactory;
+
+use StdClass;
+
+class UserSecurity
 {
-    protected function init()
-    {
-        $this->addDependency('entityManager');
-        $this->addDependency('user');
-        $this->addDependency('injectableFactory');
-        $this->addDependency('metadata');
-        $this->addDependency('totp');
-        $this->addDependency('config');
-        $this->addDependency('container');
+    protected $entityManager;
+    protected $user;
+    protected $metadata;
+    protected $config;
+    protected $authLoginFactory;
+    protected $auth2FAUserFactory;
+
+    public function __construct(
+        EntityManager $entityManager,
+        User $user,
+        Metadata $metadata,
+        Config $config,
+        LoginFactory $authLoginFactory,
+        TwoFactorUserFactory $auth2FAUserFactory
+    ) {
+        $this->entityManager = $entityManager;
+        $this->user = $user;
+        $this->metadata = $metadata;
+        $this->config = $config;
+        $this->authLoginFactory = $authLoginFactory;
+        $this->auth2FAUserFactory = $auth2FAUserFactory;
     }
 
-    protected function getUser()
+    public function read(string $id) : StdClass
     {
-        return $this->getInjection('user');
-    }
+        if (!$this->user->isAdmin() && $id !== $this->user->id) throw new Forbidden();
 
-    protected function getEntityManager()
-    {
-        return $this->getInjection('entityManager');
-    }
-
-    public function read(string $id)
-    {
-        if (!$this->getUser()->isAdmin() && $id !== $this->getUser()->id) throw new Forbidden();
-
-        $user = $this->getEntityManager()->getEntity('User', $id);
+        $user = $this->entityManager->getEntity('User', $id);
         if (!$user) throw new NotFound();
 
         if (!$user->isAdmin() && !$user->isRegular()) throw new Forbidden();
 
-        $userData = $this->getEntityManager()->getRepository('UserData')->getByUserId($id);
+        $userData = $this->entityManager->getRepository('UserData')->getByUserId($id);
 
         return (object) [
             'auth2FA' => $userData->get('auth2FA'),
@@ -75,11 +91,11 @@ class UserSecurity extends \Espo\Core\Services\Base
         ];
     }
 
-    public function generate2FAData(string $id, $data)
+    public function generate2FAData(string $id, StdClass $data) : StdClass
     {
-        if (!$this->getUser()->isAdmin() && $id !== $this->getUser()->id) throw new Forbidden();
+        if (!$this->user->isAdmin() && $id !== $this->user->id) throw new Forbidden();
 
-        $user = $this->getEntityManager()->getEntity('User', $id);
+        $user = $this->entityManager->getEntity('User', $id);
         if (!$user) throw new NotFound();
 
         if (!$user->isAdmin() && !$user->isRegular()) throw new Forbidden();
@@ -87,26 +103,20 @@ class UserSecurity extends \Espo\Core\Services\Base
         $password = $data->password ?? null;
         if (!$password) throw new Forbidden('Passport required.');
 
-        if (!$this->getUser()->isAdmin() || $this->getUser()->id === $id) {
+        if (!$this->user->isAdmin() || $this->user->id === $id) {
             $this->checkPassword($id, $password);
         }
 
-        $userData = $this->getEntityManager()->getRepository('UserData')->getByUserId($id);
+        $userData = $this->entityManager->getRepository('UserData')->getByUserId($id);
 
         $auth2FAMethod = $data->auth2FAMethod ?? null;
         if (!$auth2FAMethod) throw new BadRequest();
 
-        $className = $this->getInjection('metadata')->get(
-            ['app', 'auth2FAMethods', $auth2FAMethod, 'implementationUserClassName']
-        );
+        $user = $this->entityManager->getEntity('User', $userData->get('userId'));
+        if (!$user) throw new Error("User not found.");
 
-        if ($className) {
-            $impl = $this->getInjection('injectableFactory')->createByClassName($className);
-            $generatedData = $impl->generateData($userData, $data);
-        } else {
-            $methodName = 'generate2FAData' . $auth2FAMethod;
-            $generatedData = $this->$methodName($userData, $data);
-        }
+        $impl = $this->auth2FAUserFactory->create($auth2FAMethod);
+        $generatedData = $impl->generateData($userData, $data, $user->get('userName'));
 
         $userData->set($generatedData);
 
@@ -115,28 +125,28 @@ class UserSecurity extends \Espo\Core\Services\Base
             $userData->set('auth2FAMethod', null);
         }
 
-        $this->getEntityManager()->saveEntity($userData);
+        $this->entityManager->saveEntity($userData);
 
         return $generatedData;
     }
 
-    public function update(string $id, $data)
+    public function update(string $id, StdClass $data) : StdClass
     {
-        if (!$this->getUser()->isAdmin() && $id !== $this->getUser()->id) throw new Forbidden();
+        if (!$this->user->isAdmin() && $id !== $this->user->id) throw new Forbidden();
 
-        $user = $this->getEntityManager()->getEntity('User', $id);
+        $user = $this->entityManager->getEntity('User', $id);
         if (!$user) throw new NotFound();
 
         if (!$user->isAdmin() && !$user->isRegular()) throw new Forbidden();
 
-        $userData = $this->getEntityManager()->getRepository('UserData')->getByUserId($id);
+        $userData = $this->entityManager->getRepository('UserData')->getByUserId($id);
 
         $originalData = clone $data;
 
         $password = $originalData->password ?? null;
         if (!$password) throw new Forbidden('Passport required.');
 
-        if (!$this->getUser()->isAdmin() || $this->getUser()->id === $id) {
+        if (!$this->user->isAdmin() || $this->user->id === $id) {
             $this->checkPassword($id, $password);
         }
 
@@ -153,7 +163,7 @@ class UserSecurity extends \Espo\Core\Services\Base
         }
 
         if ($userData->get('auth2FA') && $userData->isAttributeChanged('auth2FA')) {
-            if (!$this->getInjection('config')->get('auth2FA')) {
+            if (!$this->config->get('auth2FA')) {
                 throw new Forbidden('2FA is not enabled.');
             }
         }
@@ -165,34 +175,24 @@ class UserSecurity extends \Espo\Core\Services\Base
         ) {
             $auth2FAMethod = $userData->get('auth2FAMethod');
 
-            if (!in_array($auth2FAMethod, $this->getInjection('config')->get('auth2FAMethodList', []))) {
+            if (!in_array($auth2FAMethod, $this->config->get('auth2FAMethodList', []))) {
                 throw new Forbidden('Not allowed 2FA auth method.');
             }
 
-            $className = $this->getInjection('metadata')->get(
-                ['app', 'auth2FAMethods', $auth2FAMethod, 'implementationUserClassName']
-            );
+            $code = $originalData->code ?? null;
 
-            $verifyResult = true;
-
-            if ($className) {
-                $impl = $this->getInjection('injectableFactory')->createByClassName($className);
-                if (method_exists($impl, 'verify')) {
-                    $verifyResult = $impl->verify($userData, $originalData);
-                }
-            } else {
-                $methodName = 'verify2FA' . $auth2FAMethod;
-                if (method_exists($this, $methodName)) {
-                    $verifyResult = $this->$methodName($userData, $originalData);
-                }
+            if (!$code) {
+                throw new Forbidden('Not verified.');
             }
+
+            $verifyResult = $this->auth2FAUserFactory->create($auth2FAMethod)->verify($userData, $code);
 
             if (!$verifyResult) {
                 throw new Forbidden('Not verified.');
             }
         }
 
-        $this->getEntityManager()->saveEntity($userData);
+        $this->entityManager->saveEntity($userData);
 
         $returnData = (object) [
             'auth2FA' => $userData->get('auth2FA'),
@@ -202,40 +202,21 @@ class UserSecurity extends \Espo\Core\Services\Base
         return $returnData;
     }
 
-    protected function verify2FATotp(\Espo\Entities\UserData $userData, $data) : bool
-    {
-        $code = $data->code ?? null;
-        if (!$code) return false;
-
-        $code = str_replace(' ', '', trim($code));
-
-        $secret = $userData->get('auth2FATotpSecret');
-
-        return $this->getInjection('totp')->verifyCode($secret, $code);
-    }
-
-    protected function generate2FADataTotp(\Espo\Entities\UserData $userData, $data)
-    {
-        $secret = $this->getInjection('totp')->createSecret();
-
-        return (object) [
-            'auth2FATotpSecret' => $secret,
-        ];
-    }
-
     protected function checkPassword(string $id, string $password)
     {
-        $method = $this->getConfig()->get('authenticationMethod', 'Espo');
+        $method = $this->config->get('authenticationMethod', 'Espo');
 
-        $auth = $this->getInjection('container')->get('authenticationFactory')->create($method);
+        $auth = $this->authLoginFactory->create($method);
 
-        $user = $this->getEntityManager()->getRepository('User')->where([
+        $user = $this->entityManager->getRepository('User')->where([
             'id' => $id,
         ])->findOne();
 
         if (!$user) throw new Forbidden('User is not found.');
 
-        if (!$auth->login($user->get('userName'), $password)) {
+        $result = $auth->login($user->get('userName'), $password);
+
+        if ($result->isFail()) {
             throw new Forbidden('Password is incorrect.');
         }
         return true;

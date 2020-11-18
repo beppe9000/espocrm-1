@@ -10,6 +10,7 @@
             "required": true,
             "maxLength": 100,
             "trim": true,
+            "tooltip": true,
             "view": "views/email-account/fields/email-address"
         },
         "status": {
@@ -22,11 +23,15 @@
             "trim": true
         },
         "port": {
-            "type": "varchar",
-            "default": "143"
+            "type": "int",
+            "min": 0,
+            "max": 65535,
+            "default": 993
         },
-        "ssl": {
-            "type": "bool"
+        "security": {
+            "type": "enum",
+            "default": "SSL",
+            "options": ["", "SSL", "TLS"]
         },
         "username": {
             "type": "varchar",
@@ -53,8 +58,7 @@
             "type": "bool"
         },
         "fetchSince": {
-            "type": "date",
-            "required": true
+            "type": "date"
         },
         "fetchData": {
             "type": "jsonObject",
@@ -82,7 +86,8 @@
             "default": true
         },
         "useSmtp": {
-            "type": "bool"
+            "type": "bool",
+            "tooltip": true
         },
         "smtpHost": {
             "type": "varchar",
@@ -91,7 +96,7 @@
         "smtpPort": {
             "type": "int",
             "min": 0,
-            "max": 9999,
+            "max": 65535,
             "default": 587
         },
         "smtpAuth": {
@@ -114,6 +119,14 @@
             "type": "enum",
             "options": ["login", "crammd5", "plain"],
             "default": "login"
+        },
+        "imapHandler": {
+            "type": "varchar",
+            "readOnly": true
+        },
+        "smtpHandler": {
+            "type": "varchar",
+            "readOnly": true
         },
         "createdBy": {
             "type": "link",

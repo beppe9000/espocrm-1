@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', 'search-manager'], function (Dep, SearchManager) {
+define('views/record/panels/relationship', ['views/record/panels/bottom', 'search-manager'], function (Dep, SearchManager) {
 
     return Dep.extend({
 
@@ -43,6 +43,8 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
         fetchOnModelAfterRelate: false,
 
         noCreateScopeList: ['User', 'Team', 'Role', 'Portal'],
+
+        recordsPerPage: null,
 
         init: function () {
             Dep.prototype.init.call(this);
@@ -90,6 +92,8 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
                 this.defs.view = false;
             }
 
+            var hasCreate = false;
+
             if (this.defs.create) {
                 if (this.getAcl().check(this.scope, 'create') && !~this.noCreateScopeList.indexOf(this.scope)) {
                     this.buttonList.push({
@@ -102,6 +106,7 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
                             link: this.link,
                         }
                     });
+                    hasCreate = true;
                 }
             }
 
@@ -114,6 +119,7 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
                     data.boolFilterList = this.defs.selectBoolFilterList;
                 }
                 data.massSelect = this.defs.massSelect;
+                data.createButton = hasCreate;
 
                 this.actionList.unshift({
                     label: 'Select',
@@ -157,7 +163,7 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
 
             this.wait(true);
             this.getCollectionFactory().create(this.scope, function (collection) {
-                collection.maxSize = this.getConfig().get('recordsPerPageSmall') || 5;
+                collection.maxSize = this.recordsPerPage || this.getConfig().get('recordsPerPageSmall') || 5;
 
                 if (this.defs.filters) {
                     var searchManager = new SearchManager(collection, 'listRelationship', false, this.getDateTime());
@@ -166,12 +172,11 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
                 }
 
                 collection.url = collection.urlRoot = url;
+
                 if (this.defaultOrderBy) {
-                    collection.orderBy = this.defaultOrderBy;
+                    collection.setOrder(this.defaultOrderBy, this.defaultOrder || false, true);
                 }
-                if (this.defaultOrder) {
-                    collection.order = this.defaultOrder;
-                }
+
                 this.collection = collection;
 
                 collection.parentModel = this.model;
@@ -214,7 +219,13 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
                             if (selectAttributeList) {
                                 collection.data.select = selectAttributeList.join(',');
                             }
-                            collection.fetch();
+                            if (!this.defs.hidden) {
+                                collection.fetch();
+                            } else {
+                                this.once('show', function () {
+                                    collection.fetch();
+                                });
+                            }
                         }.bind(this));
                     });
                 }, this);
@@ -223,7 +234,10 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
             }, this);
 
             this.setupFilterActions();
+            this.setupLast();
         },
+
+        setupLast: function () {},
 
         setupTitle: function () {
             this.title = this.title || this.translate(this.link, 'links', this.model.name);
@@ -515,7 +529,7 @@ Espo.define('views/record/panels/relationship', ['views/record/panels/bottom', '
 
         actionUnlinkAllRelated: function (data) {
             this.confirm(this.translate('unlinkAllConfirmation', 'messages'), function () {
-                this.notify('Please wait...');
+                Espo.Ui.notify(this.translate('pleaseWait', 'messages'));
                 $.ajax({
                     url: this.model.name + '/action/unlinkAll',
                     type: 'POST',

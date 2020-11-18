@@ -49,13 +49,25 @@ class VarcharTypeTest extends \tests\integration\Core\BaseTestCase
         "tooltip":false
     }';
 
+    protected function createFieldManager($app = null)
+    {
+        if (!$app) {
+            $app = $this;
+        }
+
+        return $app->getContainer()->get('injectableFactory')->create(
+            'Espo\\Tools\\FieldManager\\FieldManager'
+        );
+    }
+
     public function testCreate()
     {
-        $fieldManager = $this->getContainer()->get('fieldManager');
+        $fieldManager = $this->createFieldManager();
+
         $fieldDefs = get_object_vars(json_decode($this->jsonFieldDefs));
 
         $fieldManager->create('Account', 'testVarchar', $fieldDefs);
-        $this->getContainer()->get('dataManager')->rebuild('Account');
+        $this->getContainer()->get('dataManager')->rebuild(['Account']);
 
         $app = $this->createApplication();
 
@@ -74,9 +86,10 @@ class VarcharTypeTest extends \tests\integration\Core\BaseTestCase
             'name' => 'Test',
             'testVarchar' => 'test-value'
         ]);
-        $savedId = $entityManager->saveEntity($account);
 
-        $account = $entityManager->getEntity('Account', $savedId);
+        $entityManager->saveEntity($account);
+
+        $account = $entityManager->getEntity('Account', $account->id);
         $this->assertEquals('test-value', $account->get('testVarchar'));
     }
 
@@ -85,13 +98,15 @@ class VarcharTypeTest extends \tests\integration\Core\BaseTestCase
         $this->testCreate();
 
         $app = $this->createApplication();
-        $fieldManager = $app->getContainer()->get('fieldManager');
+
+        $fieldManager = $this->createFieldManager($app);
+
         $fieldDefs = get_object_vars(json_decode($this->jsonFieldDefs));
         $fieldDefs['required'] = false;
         $fieldDefs['default'] = 'default-value';
 
         $fieldManager->update('Account', 'testVarchar', $fieldDefs);
-        $this->getContainer()->get('dataManager')->rebuild('Account');
+        $this->getContainer()->get('dataManager')->rebuild(['Account']);
 
         $app = $this->createApplication();
 
@@ -102,13 +117,15 @@ class VarcharTypeTest extends \tests\integration\Core\BaseTestCase
         $this->assertEquals('default-value', $savedFieldDefs['default']);
 
         $entityManager = $app->getContainer()->get('entityManager');
+
         $account = $entityManager->getEntity('Account');
         $account->set([
             'name' => 'New Test',
         ]);
-        $savedId = $entityManager->saveEntity($account);
 
-        $account = $entityManager->getEntity('Account', $savedId);
+        $entityManager->saveEntity($account);
+
+        $account = $entityManager->getEntity('Account', $account->id);
         $this->assertEquals('default-value', $account->get('testVarchar'));
     }
 }

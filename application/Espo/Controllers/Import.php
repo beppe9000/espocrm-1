@@ -30,9 +30,9 @@
 namespace Espo\Controllers;
 
 use Espo\Core\Utils as Utils;
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
 
 class Import extends \Espo\Core\Controllers\Record
 {
@@ -78,24 +78,13 @@ class Import extends \Espo\Core\Controllers\Record
         return $this->getContainer()->get('entityManager');
     }
 
-    public function actionUploadFile($params, $data, $request)
+    public function postActionUploadFile($params, $data)
     {
         $contents = $data;
 
-        if (!$request->isPost()) {
-            throw new BadRequest();
-        }
+        $attachmentId = $this->getService('Import')->uploadFile($contents);
 
-        $attachment = $this->getEntityManager()->getEntity('Attachment');
-        $attachment->set('type', 'text/csv');
-        $attachment->set('role', 'Import File');
-        $attachment->set('name', 'import-file.csv');
-        $attachment->set('contents', $contents);
-        $this->getEntityManager()->saveEntity($attachment);
-
-        return [
-            'attachmentId' => $attachment->id
-        ];
+        return ['attachmentId' => $attachmentId];
     }
 
     public function actionRevert($params, $data, $request)
@@ -106,7 +95,9 @@ class Import extends \Espo\Core\Controllers\Record
         if (!$request->isPost()) {
             throw new BadRequest();
         }
-        return $this->getService('Import')->revert($data->id);
+        $this->getService('Import')->revert($data->id);
+
+        return true;
     }
 
     public function actionRemoveDuplicates($params, $data, $request)
@@ -117,7 +108,9 @@ class Import extends \Espo\Core\Controllers\Record
         if (!$request->isPost()) {
             throw new BadRequest();
         }
-        return $this->getService('Import')->removeDuplicates($data->id);
+        $this->getService('Import')->removeDuplicates($data->id);
+
+        return true;
     }
 
     public function actionCreate($params, $data, $request)
@@ -190,6 +183,8 @@ class Import extends \Espo\Core\Controllers\Record
             'skipDuplicateChecking' => !empty($data->skipDuplicateChecking),
             'idleMode' => !empty($data->idleMode),
             'silentMode' => !empty($data->silentMode),
+            'manualMode' => !empty($data->manualMode),
+            'defaultFieldList' => $data->defaultFieldList ?? [],
         ];
 
         if (property_exists($data, 'updateBy')) {
@@ -210,7 +205,9 @@ class Import extends \Espo\Core\Controllers\Record
         if (empty($data->id) || empty($data->entityType) || empty($data->entityId)) {
             throw new BadRequest();
         }
+
         $this->getService('Import')->unmarkAsDuplicate($data->id, $data->entityType, $data->entityId);
+
         return true;
     }
 }

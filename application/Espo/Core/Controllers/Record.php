@@ -29,11 +29,19 @@
 
 namespace Espo\Core\Controllers;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\BadRequest;
-use \Espo\Core\Utils\Util;
+use Espo\Core\Exceptions\{
+    Error,
+    Forbidden,
+    NotFound,
+    BadRequest,
+    ForbiddenSilent,
+};
+
+use Espo\Core\{
+    Utils\Util,
+    Utils\ControllerUtil,
+    Record\Collection as RecordCollection,
+};
 
 class Record extends Base
 {
@@ -41,27 +49,16 @@ class Record extends Base
 
     public static $defaultAction = 'list';
 
-    protected $defaultRecordServiceName = 'Record';
-
     protected function getEntityManager()
     {
         return $this->getContainer()->get('entityManager');
     }
 
-    protected function getRecordService($name = null)
+    protected function getRecordService(?string $name = null) : object
     {
-        if (empty($name)) {
-            $name = $this->name;
-        }
+        $name = $name ?? $this->name;
 
-        if ($this->getServiceFactory()->checkExists($name)) {
-            $service = $this->getServiceFactory()->create($name);
-        } else {
-            $service = $this->getServiceFactory()->create($this->defaultRecordServiceName);
-            $service->setEntityType($name);
-        }
-
-        return $service;
+        return $this->getContainer()->get('recordServiceContainer')->get($name);
     }
 
     public function actionRead($params, $data, $request)
@@ -88,7 +85,7 @@ class Record extends Base
         }
 
         if (!$this->getAcl()->check($this->name, 'create')) {
-            throw new Forbidden();
+            throw new Forbidden("No create access for {$this->name}.");
         }
 
         $service = $this->getRecordService();
@@ -109,7 +106,7 @@ class Record extends Base
         }
 
         if (!$this->getAcl()->check($this->name, 'edit')) {
-            throw new Forbidden();
+            throw new Forbidden("No edit access for {$this->name}.");
         }
 
         $id = $params['id'];
@@ -124,7 +121,7 @@ class Record extends Base
     public function actionList($params, $data, $request)
     {
         if (!$this->getAcl()->check($this->name, 'read')) {
-            throw new Forbidden();
+            throw new Forbidden("No read access for {$this->name}.");
         }
 
         $params = [];
@@ -140,14 +137,21 @@ class Record extends Base
 
         $result = $this->getRecordService()->find($params);
 
+        if ($result instanceof RecordCollection) {
+            return (object) [
+                'total' => $result->getTotal(),
+                'list' => $result->getValueMapList(),
+            ];
+        }
+
         if (is_array($result)) {
-            return [
+            return (object) [
                 'total' => $result['total'],
                 'list' => isset($result['collection']) ? $result['collection']->getValueMapList() : $result['list']
             ];
         }
 
-        return [
+        return (object) [
             'total' => $result->total,
             'list' => isset($result->collection) ? $result->collection->getValueMapList() : $result->list
         ];
@@ -156,16 +160,19 @@ class Record extends Base
     public function getActionListKanban($params, $data, $request)
     {
         if (!$this->getAcl()->check($this->name, 'read')) {
-            throw new Forbidden();
+            throw new Forbidden("No read access for {$this->name}.");
         }
 
         $params = [];
+
         $this->fetchListParamsFromRequest($params, $request, $data);
 
         $maxSizeLimit = $this->getConfig()->get('recordListMaxSizeLimit', self::MAX_SIZE_LIMIT);
+
         if (empty($params['maxSize'])) {
             $params['maxSize'] = $maxSizeLimit;
         }
+
         if (!empty($params['maxSize']) && $params['maxSize'] > $maxSizeLimit) {
             throw new Forbidden("Max size should should not exceed " . $maxSizeLimit . ". Use offset and limit.");
         }
@@ -173,15 +180,15 @@ class Record extends Base
         $result = $this->getRecordService()->getListKanban($params);
 
         return (object) [
-            'total' => $result->total,
-            'list' => $result->collection->getValueMapList(),
-            'additionalData' => $result->additionalData
+            'total' => $result->getTotal(),
+            'list' => $result->getCollection()->getValueMapList(),
+            'additionalData' => $result->getData(),
         ];
     }
 
     protected function fetchListParamsFromRequest(&$params, $request, $data)
     {
-        \Espo\Core\Utils\ControllerUtil::fetchListParamsFromRequest($params, $request, $data);
+        ControllerUtil::fetchListParamsFromRequest($params, $request, $data);
     }
 
     public function actionListLinked($params, $data, $request)
@@ -201,6 +208,13 @@ class Record extends Base
         }
 
         $result = $this->getRecordService()->findLinked($id, $link, $params);
+
+        if ($result instanceof RecordCollection) {
+            return (object) [
+                'total' => $result->getTotal(),
+                'list' => $result->getValueMapList(),
+            ];
+        }
 
         if (is_array($result)) {
             return [
@@ -223,10 +237,9 @@ class Record extends Base
 
         $id = $params['id'];
 
-        if ($this->getRecordService()->delete($id)) {
-            return true;
-        }
-        throw new Error();
+        $this->getRecordService()->delete($id);
+
+        return true;
     }
 
     public function actionExport($params, $data, $request)
@@ -286,14 +299,14 @@ class Record extends Base
         }
 
         if (!$this->getAcl()->check($this->name, 'edit')) {
-            throw new Forbidden();
+            throw new Forbidden("No edit access for {$this->name}.");
         }
         if (empty($data->attributes)) {
             throw new BadRequest();
         }
 
         if ($this->getAcl()->get('massUpdatePermission') !== 'yes') {
-            throw new Forbidden();
+            throw new Forbidden("No massUpdatePermission.");
         }
 
         $actionParams = $this->getMassActionParamsFromData($data);
@@ -313,7 +326,7 @@ class Record extends Base
 
         if (array_key_exists('where', $actionParams)) {
             if ($this->getAcl()->get('massUpdatePermission') !== 'yes') {
-                throw new Forbidden();
+                throw new Forbidden("No massUpdatePermission.");
             }
         }
 
@@ -346,7 +359,7 @@ class Record extends Base
 
             return $this->getRecordService()->massLink($id, $link, $where, $selectData);
         } else {
-            $foreignIdList = array();
+            $foreignIdList = [];
             if (isset($data->id)) {
                 $foreignIdList[] = $data->id;
             }
@@ -358,13 +371,10 @@ class Record extends Base
 
             $result = false;
             foreach ($foreignIdList as $foreignId) {
-                if ($this->getRecordService()->link($id, $link, $foreignId)) {
-                    $result = true;
-                }
+                $this->getRecordService()->link($id, $link, $foreignId);
+                $result = true;
             }
-            if ($result) {
-                return true;
-            }
+            return $result;
         }
 
         throw new Error();
@@ -395,15 +405,10 @@ class Record extends Base
 
         $result = false;
         foreach ($foreignIdList as $foreignId) {
-            if ($this->getRecordService()->unlink($id, $link, $foreignId)) {
-                $result = $result || true;
-            }
+            $this->getRecordService()->unlink($id, $link, $foreignId);
+            $result = true;
         }
-        if ($result) {
-            return true;
-        }
-
-        throw new Error();
+        return $result;
     }
 
     public function actionFollow($params, $data, $request)
@@ -412,7 +417,7 @@ class Record extends Base
             throw new BadRequest();
         }
         if (!$this->getAcl()->check($this->name, 'stream')) {
-            throw new Forbidden();
+            throw new Forbidden("No stream access for {$this->name}.");
         }
         $id = $params['id'];
         return $this->getRecordService()->follow($id);
@@ -424,7 +429,7 @@ class Record extends Base
             throw new BadRequest();
         }
         if (!$this->getAcl()->check($this->name, 'read')) {
-            throw new Forbidden();
+            throw new Forbidden("No read access for {$this->name}.");
         }
         $id = $params['id'];
         return $this->getRecordService()->unfollow($id);
@@ -444,7 +449,7 @@ class Record extends Base
         $attributes = $data->attributes;
 
         if (!$this->getAcl()->check($this->name, 'edit')) {
-            throw new Forbidden();
+            throw new Forbidden("No edit access for {$this->name}.");
         }
 
         return $this->getRecordService()->merge($targetId, $sourceIds, $attributes);
@@ -480,7 +485,7 @@ class Record extends Base
     public function postActionMassUnfollow($params, $data, $request)
     {
         if (!$this->getAcl()->check($this->name, 'stream')) {
-            throw new Forbidden();
+            throw new Forbidden("No stream access for {$this->name}.");
         }
 
         $actionParams = $this->getMassActionParamsFromData($data);

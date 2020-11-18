@@ -29,9 +29,20 @@
 
 namespace Espo\Core\Console\Commands;
 
-use Espo\Core\Exceptions\Error;
+use Espo\Core\{
+    Exceptions\Error,
+    Application,
+    UpgradeManager,
+    Utils\Util,
+    Utils\File\Manager as FileManager,
+    Utils\Config,
+};
 
-class Upgrade extends Base
+use Symfony\Component\Process\PhpExecutableFinder;
+
+use Exception;
+
+class Upgrade implements Command
 {
     protected $upgradeManager;
 
@@ -48,19 +59,104 @@ class Upgrade extends Base
         'rebuild',
     ];
 
-    public function run($options, $flagList, $argumentList)
+    private $fileManager;
+    private $config;
+
+    public function __construct(FileManager $fileManager, Config $config)
+    {
+        $this->fileManager = $fileManager;
+        $this->config = $config;
+    }
+
+    public function run(array $options, array $flagList, array $argumentList)
     {
         $params = $this->normalizeParams($options, $flagList, $argumentList);
 
-        switch ($params['mode']) {
-            case 'local':
-                $this->runLocalUpgrade($params);
-                break;
+        $fromVersion = $this->config->get('version');
+        $toVersion = $params->toVersion ?? null;
 
-            default:
-            case 'remote':
-                $this->runRemoteUpgrade($params);
-                break;
+        $versionInfo = $this->getVersionInfo($toVersion);
+
+        $nextVersion = $versionInfo->nextVersion ?? null;
+        $lastVersion = $versionInfo->lastVersion ?? null;
+
+        $packageFile = $this->getPackageFile($params, $versionInfo);
+
+        if (!$packageFile) {
+            return;
+        }
+
+        if ($params->localMode) {
+            $upgradeId = $this->upload($packageFile);
+
+            $manifest = $this->getUpgradeManager()->getManifestById($upgradeId);
+
+            $nextVersion = $manifest['version'];
+        }
+
+        fwrite(\STDOUT, "Current version is {$fromVersion}.\n");
+
+        if (!$params->skipConfirmation) {
+            fwrite(\STDOUT, "EspoCRM will be upgraded to version {$nextVersion} now. Enter [Y] to continue.\n");
+
+            if (!$this->confirm()) {
+                echo "Upgrade canceled.\n";
+
+                return;
+            }
+        }
+
+        if (filter_var($packageFile, \FILTER_VALIDATE_URL)) {
+            fwrite(\STDOUT, "Downloading...");
+
+            $packageFile = $this->downloadFile($packageFile);
+
+            fwrite(\STDOUT, "\n");
+
+            if (!$packageFile) {
+                fwrite(\STDOUT, "Error: Unable to download upgrade package.\n");
+
+                return;
+            }
+        }
+
+        $upgradeId = $upgradeId ?? $this->upload($packageFile);
+
+        fwrite(\STDOUT, "Upgrading... This may take a while...");
+
+        try {
+            $this->runUpgradeProcess($upgradeId, $params);
+        }
+        catch (Exception $e) {
+            $errorMessage = $e->getMessage();
+        }
+
+        fwrite(\STDOUT, "\n");
+
+        if (!$params->keepPackageFile) {
+            $this->fileManager->unlink($packageFile);
+        }
+
+        if (!empty($errorMessage)) {
+            fwrite(\STDOUT, $errorMessage . "\n");
+
+            return;
+        }
+
+        $currentVerison = $this->getCurrentVersion();
+
+        fwrite(\STDOUT, "Upgrade is complete. Current version is {$currentVerison}.\n");
+
+        if ($lastVersion && $lastVersion !== $currentVerison && $fromVersion !== $currentVerison) {
+            fwrite(\STDOUT, "Newer version is available. Run command again to upgrade.\n");
+
+            return;
+        }
+
+        if ($lastVersion && $lastVersion === $currentVerison) {
+            fwrite(\STDOUT, "You have the latest version.\n");
+
+            return;
         }
     }
 
@@ -70,181 +166,106 @@ class Upgrade extends Base
      * -s - single process
      * --file="EspoCRM-upgrade.zip"
      * --step="beforeUpgradeScript"
-     * @param  array $options
-     * @param  array $flagList
-     * @param  array $argumentList
-     * @return array
      */
-    protected function normalizeParams($options, $flagList, $argumentList)
+    protected function normalizeParams(array $options, array $flagList, array $argumentList) : object
     {
-        $params = [
-            'mode' => 'remote',
+        $params = (object) [
+            'localMode' => false,
             'skipConfirmation' => false,
             'singleProcess' => false,
+            'keepPackageFile' => false,
         ];
 
         if (!empty($options['file'])) {
-            $params['mode'] = 'local';
-            $params['file'] = $options['file'];
+            $params->localMode = true;
+            $params->file = $options['file'];
+            $params->keepPackageFile = true;
         }
 
         if (in_array('y', $flagList)) {
-            $params['skipConfirmation'] = true;
+            $params->skipConfirmation = true;
         }
 
         if (in_array('s', $flagList)) {
-            $params['singleProcess'] = true;
+            $params->singleProcess = true;
+        }
+
+        if (in_array('patch', $flagList)) {
+            $currentVersion = $this->config->get('version');
+
+            if (preg_match('/^(.*)\.(.*)\..*$/', $currentVersion, $match)) {
+                $options['toVersion'] = $match[1] . '.' . $match[2];
+            }
         }
 
         if (!empty($options['step'])) {
-            $params['step'] = $options['step'];
+            $params->step = $options['step'];
+        }
+
+        if (!empty($options['toVersion'])) {
+            $params->toVersion = $options['toVersion'];
         }
 
         return $params;
     }
 
-    protected function runLocalUpgrade(array $params)
+    protected function getPackageFile(object $params, object $versionInfo)
     {
-        if (empty($params['file']) || !file_exists($params['file'])) {
-            echo "Upgrade package is not found.\n";
-            return;
-        }
+        $packageFile = $params->file ?? null;
 
-        $packageFile = $params['file'];
-        $fromVersion = $this->getConfig()->get('version');
+        if (!$params->localMode) {
+            if (empty($versionInfo)) {
+                fwrite(\STDOUT, "Error: Upgrade server is currently unavailable. Please try again later.\n");
 
-        fwrite(\STDOUT, "Current version is {$fromVersion}.\n");
-
-        $upgradeId = $this->upload($packageFile);
-        $manifest = $this->getUpgradeManager()->getManifestById($upgradeId);
-        $nextVersion = $manifest['version'];
-
-        if (!$params['skipConfirmation']) {
-            fwrite(\STDOUT, "EspoCRM will be upgraded to version {$nextVersion} now. Enter [Y] to continue.\n");
-
-            if (!$this->confirm()) {
-                echo "Upgrade canceled.\n";
                 return;
             }
-        }
 
-        fwrite(\STDOUT, "Upgrading... This may take a while...");
+            if (!isset($versionInfo->nextVersion)) {
+                fwrite(\STDOUT, "There are no available upgrades.\n");
 
-        try {
-            $this->runUpgradeProcess($upgradeId, $params);
-        } catch (\Exception $e) {
-            fwrite(\STDOUT, "\n");
-            fwrite(\STDOUT, $e->getMessage() . "\n");
-            return;
-        }
-
-        fwrite(\STDOUT, "\n");
-
-        $app = new \Espo\Core\Application();
-        $currentVerison = $app->getContainer()->get('config')->get('version');
-
-        fwrite(\STDOUT, "Upgrade is complete. Current version is {$currentVerison}.\n");
-
-        $infoData = $this->getVersionInfo();
-        $lastVersion = $infoData->lastVersion ?? null;
-
-        if ($lastVersion && $lastVersion !== $currentVerison && $fromVersion !== $currentVerison) {
-            fwrite(\STDOUT, "Newer version is available.\n");
-            return;
-        }
-
-        if ($lastVersion && $lastVersion === $currentVerison) {
-            fwrite(\STDOUT, "You have the latest version.\n");
-            return;
-        }
-    }
-
-    protected function runRemoteUpgrade(array $params)
-    {
-        $infoData = $this->getVersionInfo();
-        if (!$infoData) return;
-
-        $nextVersion = $infoData->nextVersion ?? null;
-        $lastVersion = $infoData->lastVersion ?? null;
-
-        $fromVersion = $this->getConfig()->get('version');
-
-        fwrite(\STDOUT, "Current version is {$fromVersion}.\n");
-
-        if (!$nextVersion) {
-            echo "There are no available upgrades.\n";
-            return;
-        }
-
-        if (!$params['skipConfirmation']) {
-            fwrite(\STDOUT, "EspoCRM will be upgraded to version {$nextVersion} now. Enter [Y] to continue.\n");
-
-            if (!$this->confirm()) {
-                echo "Upgrade canceled.\n";
                 return;
             }
+
+            if (!isset($versionInfo->nextPackage)) {
+                fwrite(\STDOUT, "Error: Upgrade package is not found.\n");
+
+                return;
+            }
+
+            return $versionInfo->nextPackage;
         }
 
-        fwrite(\STDOUT, "Downloading...");
+        if (!$packageFile || !file_exists($packageFile)) {
+            fwrite(\STDOUT, "Error: Upgrade package is not found.\n");
 
-        $upgradePackageFilePath = $this->downloadFile($infoData->nextPackage);
-        if (!$upgradePackageFilePath) return;
-
-        fwrite(\STDOUT, "\n");
-
-        fwrite(\STDOUT, "Upgrading... This may take a while...");
-
-        $upgradeId = $this->upload($upgradePackageFilePath);
-
-        try {
-            $this->runUpgradeProcess($upgradeId, $params);
-        } catch (\Exception $e) {
-            $error = $e->getMessage();
-        }
-
-        $this->getFileManager()->unlink($upgradePackageFilePath);
-
-        fwrite(\STDOUT, "\n");
-
-        if (!empty($error)) {
-            echo $error;
             return;
         }
 
-        $app = new \Espo\Core\Application();
-        $currentVerison = $app->getContainer()->get('config')->get('version');
-
-        fwrite(\STDOUT, "Upgrade is complete. Current version is {$currentVerison}.\n");
-
-        if ($lastVersion && $lastVersion !== $currentVerison && $fromVersion !== $currentVerison) {
-            fwrite(\STDOUT, "Newer version is available. Run command again to upgrade.\n");
-            return;
-        }
-
-        if ($lastVersion && $lastVersion === $currentVerison) {
-            fwrite(\STDOUT, "You have the latest version.\n");
-            return;
-        }
+        return $packageFile;
     }
 
-    protected function upload($filePath)
+    protected function upload(string $filePath)
     {
         try {
             $fileData = file_get_contents($filePath);
             $fileData = 'data:application/zip;base64,' . base64_encode($fileData);
+
             $upgradeId = $this->getUpgradeManager()->upload($fileData);
-        } catch (\Exception $e) {
+        }
+        catch (Exception $e) {
             die("Error: " . $e->getMessage() . "\n");
         }
 
         return $upgradeId;
     }
 
-    protected function runUpgradeProcess($upgradeId, array $params = [])
+    protected function runUpgradeProcess(string $upgradeId, object $params = null)
     {
-        $useSingleProcess = array_key_exists('singleProcess', $params) ? $params['singleProcess'] : false;
+        $params = $params ?? (object) [];
+        $useSingleProcess = property_exists($params, 'singleProcess') ? $params->singleProcess : false;
 
-        $stepList = !empty($params['step']) ? [$params['step']] : $this->upgradeStepList;
+        $stepList = !empty($params->step) ? [$params->step] : $this->upgradeStepList;
+
         array_unshift($stepList, 'init');
         array_push($stepList, 'finalize');
 
@@ -255,33 +276,40 @@ class Upgrade extends Base
         return $this->runStepsInSingleProcess($upgradeId, $stepList);
     }
 
-    protected function runStepsInSingleProcess($upgradeId, array $stepList)
+    protected function runStepsInSingleProcess(string $upgradeId, array $stepList)
     {
         $GLOBALS['log']->debug('Installation process ['.$upgradeId.']: Single process mode.');
 
         try {
             foreach ($stepList as $stepName) {
+                fwrite(\STDOUT, ".");
+
                 $upgradeManager = $this->getUpgradeManager(true);
                 $upgradeManager->runInstallStep($stepName, ['id' => $upgradeId]);
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $GLOBALS['log']->error('Upgrade Error: ' . $e->getMessage());
+
             throw new Error($e->getMessage());
         }
 
         return true;
     }
 
-    protected function runSteps($upgradeId, array $stepList)
+    protected function runSteps(string $upgradeId, array $stepList)
     {
         $phpExecutablePath = $this->getPhpExecutablePath();
 
         foreach ($stepList as $stepName) {
+            fwrite(\STDOUT, ".");
+
             $command = $phpExecutablePath . " command.php upgrade-step --step=". ucfirst($stepName) ." --id=". $upgradeId;
 
             $shellResult = shell_exec($command);
+
             if ($shellResult !== 'true') {
                 $GLOBALS['log']->error('Upgrade Error: ' . $shellResult);
+
                 throw new Error($shellResult);
             }
         }
@@ -292,31 +320,26 @@ class Upgrade extends Base
     protected function confirm()
     {
         $fh = fopen('php://stdin', 'r');
+
         $inputLine = trim(fgets($fh));
+
         fclose($fh);
+
         if (strtolower($inputLine) !== 'y'){
             return false;
         }
+
         return true;
     }
 
-    protected function getConfig()
-    {
-        return $this->getContainer()->get('config');
-    }
-
-    protected function getFileManager()
-    {
-        return $this->getContainer()->get('fileManager');
-    }
-
-    protected function getUpgradeManager($reload = false)
+    protected function getUpgradeManager(bool $reload = false)
     {
         if (!$this->upgradeManager || $reload) {
-            $app = new \Espo\Core\Application();
+            $app = new Application();
+
             $app->setupSystemUser();
 
-            $this->upgradeManager = new \Espo\Core\UpgradeManager($app->getContainer());
+            $this->upgradeManager = new UpgradeManager($app->getContainer());
         }
 
         return $this->upgradeManager;
@@ -324,66 +347,82 @@ class Upgrade extends Base
 
     protected function getPhpExecutablePath()
     {
-        $phpExecutablePath = $this->getConfig()->get('phpExecutablePath');
+        $phpExecutablePath = $this->config->get('phpExecutablePath');
 
         if (!$phpExecutablePath) {
-            $phpExecutablePath = (new \Symfony\Component\Process\PhpExecutableFinder)->find();
+            $phpExecutablePath = (new PhpExecutableFinder)->find();
         }
 
         return $phpExecutablePath;
     }
 
-    protected function getVersionInfo()
+    protected function getVersionInfo($toVersion = null)
     {
         $url = 'https://s.espocrm.com/upgrade/next/';
-        $url = $this->getConfig()->get('upgradeNextVersionUrl', $url);
-        $url .= '?fromVersion=' . $this->getConfig()->get('version');
+        $url = $this->config->get('upgradeNextVersionUrl', $url);
+        $url .= '?fromVersion=' . $this->config->get('version');
+
+        if ($toVersion) {
+            $url .= '&toVersion=' . $toVersion;
+        }
 
         $ch = curl_init();
+
         curl_setopt($ch, \CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, \CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, \CURLOPT_URL, $url);
+
         $result = curl_exec($ch);
+
         curl_close($ch);
 
         try {
             $data = json_decode($result);
-        } catch (\Exception $e) {
+        }
+        catch (Exception $e) {
             echo "Could not parse info about next version.\n";
+
             return;
         }
 
         if (!$data) {
             echo "Could not get info about next version.\n";
+
             return;
         }
 
         return $data;
     }
 
-    protected function downloadFile($url)
+    protected function downloadFile(string $url)
     {
-        $localFilePath = 'data/upload/upgrades/' . \Espo\Core\Utils\Util::generateId() . '.zip';
-        $this->getFileManager()->putContents($localFilePath, '');
+        $localFilePath = 'data/upload/upgrades/' . Util::generateId() . '.zip';
+
+        $this->fileManager->putContents($localFilePath, '');
 
         if (is_file($url)) {
             copy($url, $localFilePath);
         } else {
             $options = [
-                CURLOPT_FILE  => fopen($localFilePath, 'w'),
-                CURLOPT_TIMEOUT => 3600,
-                CURLOPT_URL => $url
+                \CURLOPT_FILE => fopen($localFilePath, 'w'),
+                \CURLOPT_TIMEOUT => 3600,
+                \CURLOPT_URL => $url,
             ];
 
             $ch = curl_init();
+
             curl_setopt_array($ch, $options);
+
             curl_exec($ch);
+
             curl_close($ch);
         }
 
-        if (!$this->getFileManager()->isFile($localFilePath)) {
+        if (!$this->fileManager->isFile($localFilePath)) {
             echo "\nCould not download upgrade file.\n";
-            $this->getFileManager()->unlink($localFilePath);
+
+            $this->fileManager->unlink($localFilePath);
+
             return;
         }
 
@@ -397,10 +436,22 @@ class Upgrade extends Base
         }
 
         $result = shell_exec("echo test");
+
         if (empty($result)) {
             return false;
         }
 
         return true;
+    }
+
+    protected function getCurrentVersion()
+    {
+        $configData = include "data/config.php";
+
+        if (!$configData) {
+            return null;
+        }
+
+        return $configData['version'] ?? null;
     }
 }

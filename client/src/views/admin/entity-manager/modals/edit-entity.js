@@ -485,7 +485,7 @@ define('views/admin/entity-manager/modals/edit-entity', ['views/modal', 'model']
                 'stream',
                 'disabled',
                 'statusField',
-                'iconClass'
+                'iconClass',
             ];
 
             if (this.scope) {
@@ -498,6 +498,8 @@ define('views/admin/entity-manager/modals/edit-entity', ['views/modal', 'model']
             if (this.hasColorField) {
                 arr.push('color');
             }
+
+            var fetchedAttributes = Espo.Utils.cloneDeep(this.model.fetchedAttributes) || {};
 
             var notValid = false;
 
@@ -538,7 +540,7 @@ define('views/admin/entity-manager/modals/edit-entity', ['views/modal', 'model']
                 fullTextSearch: this.model.get('fullTextSearch'),
                 countDisabled: this.model.get('countDisabled'),
                 statusField: this.model.get('statusField'),
-                iconClass: this.model.get('iconClass')
+                iconClass: this.model.get('iconClass'),
             };
 
             if (this.hasColorField) {
@@ -565,73 +567,106 @@ define('views/admin/entity-manager/modals/edit-entity', ['views/modal', 'model']
                 }
             }
 
-            $.ajax({
-                url: url,
-                type: 'POST',
-                data: JSON.stringify(data),
-                error: function () {
+            Espo.Ajax.postRequest(url, data)
+            .then(
+                function () {
+                    this.model.fetchedAttributes = this.model.getClonedAttributes();
+
+                    if (this.scope) {
+                        Espo.Ui.success(this.translate('Saved'));
+                    } else {
+                        Espo.Ui.success(this.translate('entityCreated', 'messages', 'EntityManager'));
+                    }
+                    var global = ((this.getLanguage().data || {}) || {}).Global;
+                    (global.scopeNames || {})[name] = this.model.get('labelSingular');
+                    (global.scopeNamesPlural || {})[name] = this.model.get('labelPlural');
+
+                    new Promise(
+                        function (resolve) {
+                            this.getMetadata().load(function () {
+                                resolve();
+                            }, true);
+                        }.bind(this)
+                    ).then(
+                        Promise.all([
+                            new Promise(
+                                function (resolve) {
+                                    this.getConfig().load(function () {
+                                        resolve();
+                                    }, true);
+                                }.bind(this)
+                            ),
+                            new Promise(
+                                function (resolve) {
+                                    this.getLanguage().load(function () {
+                                        resolve();
+                                    }, true);
+                                }.bind(this)
+                            )
+                        ])
+                    ).then(
+                        function () {
+                            var rebuildRequired = data.fullTextSearch && !fetchedAttributes.fullTextSearch;
+                            var o = {
+                                rebuildRequired: rebuildRequired,
+                                scope: name,
+                            };
+                            this.trigger('after:save', o);
+                        }.bind(this)
+                    );
+                }.bind(this)
+            )
+            .fail(
+                function () {
                     this.enableButton('save');
                     this.enableButton('resetToDefault');
                 }.bind(this)
-            }).done(function () {
-                this.model.fetchedAttributes = this.model.getClonedAttributes();
-
-                if (this.scope) {
-                    Espo.Ui.success(this.translate('Saved'));
-                } else {
-                    Espo.Ui.success(this.translate('entityCreated', 'messages', 'EntityManager'));
-                }
-                var global = ((this.getLanguage().data || {}) || {}).Global;
-                (global.scopeNames || {})[name] = this.model.get('labelSingular');
-                (global.scopeNamesPlural || {})[name] = this.model.get('labelPlural');
-
-                Promise.all([
-                    new Promise(function (resolve) {
-                        this.getMetadata().load(function () {
-                            resolve();
-                        }, true);
-                    }.bind(this)),
-                    new Promise(function (resolve) {
-                        this.getConfig().load(function () {
-                            resolve();
-                        }, true);
-                    }.bind(this)),
-                    new Promise(function (resolve) {
-                        this.getLanguage().load(function () {
-                            resolve();
-                        }, true);
-                    }.bind(this))
-                ]).then(function () {
-                    this.trigger('after:save');
-                }.bind(this));
-
-            }.bind(this));
+            );
         },
 
         actionResetToDefault: function () {
             this.confirm(this.translate('confirmation', 'messages'), function () {
                 Espo.Ui.notify(this.translate('pleaseWait', 'messages'));
+
                 this.ajaxPostRequest('EntityManager/action/resetToDefault', {
-                    scope: this.scope
-                }).then(function () {
-                    Promise.all([
-                        new Promise(function (resolve) {
-                            this.getMetadata().load(function () {
-                                this.getMetadata().storeToCache();
-                                resolve();
-                            }.bind(this), true);
-                        }.bind(this)),
-                        new Promise(function (resolve) {
-                            this.getLanguage().load(function () {
-                                resolve();
-                            }.bind(this), true);
-                        }.bind(this))
-                    ]).then(function () {
-                        this.setupData();
-                        this.model.fetchedAttributes = this.model.getClonedAttributes();
-                        this.notify('Done', 'success');
-                    }.bind(this));
-                }.bind(this));
+                    scope: this.scope,
+                })
+                .then(
+                    function () {
+                        (new Promise(
+                            function (resolve) {
+                                this.getMetadata().load(
+                                    function () {
+                                        this.getMetadata().storeToCache();
+                                        resolve();
+                                    }.bind(this),
+                                    true
+                                );
+                            }.bind(this)
+                        ))
+                        .then(
+                            function () {
+                                return new Promise(
+                                    function (resolve) {
+                                        this.getLanguage().load(
+                                            function () {
+                                                resolve();
+                                            }.bind(this),
+                                            true
+                                        );
+                                    }.bind(this)
+                                )
+                            }.bind(this)
+                        )
+                        .then(
+                            function () {
+                                this.setupData();
+                                this.model.fetchedAttributes = this.model.getClonedAttributes();
+                                this.notify('Done', 'success');
+                            }.bind(this)
+                        );
+                    }.bind(this)
+                );
             }, this);
         },
 

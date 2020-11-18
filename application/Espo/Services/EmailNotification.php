@@ -29,71 +29,74 @@
 
 namespace Espo\Services;
 
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\NotFound;
 
 use Espo\ORM\Entity;
 
+use Espo\ORM\QueryParams\Select;
+
 use Espo\Core\Utils\Util;
 
-class EmailNotification extends \Espo\Core\Services\Base
+use Espo\Core\{
+    ORM\EntityManager,
+    Htmlizer\Factory as HtmlizerFactory,
+    Utils\Config,
+    Utils\Metadata,
+    Utils\Language,
+    Select\SelectManagerFactory,
+    InjectableFactory,
+    Utils\TemplateFileManager,
+    Mail\EmailSender as EmailSender,
+};
+
+use Exception;
+
+class EmailNotification
 {
     const HOURS_THERSHOLD = 5;
 
     const PROCESS_MAX_COUNT = 200;
 
-    protected function init()
-    {
-        $this->addDependencyList([
-            'metadata',
-            'mailSender',
-            'language',
-            'dateTime',
-            'number',
-            'fileManager',
-            'selectManagerFactory',
-            'templateFileManager',
-            'injectableFactory',
-            'config'
-        ]);
+    protected $htmlizer;
+
+    protected $entityManager;
+    protected $htmlizerFactory;
+    protected $emailSender;
+    protected $config;
+    protected $selectManagerFactory;
+    protected $injectableFactory;
+    protected $templateFileManager;
+    protected $metadata;
+
+    public function __construct(
+        EntityManager $entityManager,
+        HtmlizerFactory $htmlizerFactory,
+        EmailSender $emailSender,
+        Config $config,
+        SelectManagerFactory $selectManagerFactory,
+        InjectableFactory $injectableFactory,
+        TemplateFileManager $templateFileManager,
+        Metadata $metadata,
+        Language $language
+    ) {
+        $this->entityManager = $entityManager;
+        $this->htmlizerFactory = $htmlizerFactory;
+        $this->emailSender = $emailSender;
+        $this->config = $config;
+        $this->selectManagerFactory = $selectManagerFactory;
+        $this->injectableFactory = $injectableFactory;
+        $this->templateFileManager = $templateFileManager;
+        $this->metadata = $metadata;
+        $this->language = $language;
     }
 
     protected $emailNotificationEntityHandlerHash = [];
 
-    protected function getMailSender()
-    {
-        return $this->getInjection('mailSender');
-    }
-
-    protected function getMetadata()
-    {
-        return $this->getInjection('metadata');
-    }
-
-    protected function getLanguage()
-    {
-        return $this->getInjection('language');
-    }
-
-    protected function getDateTime()
-    {
-        return $this->getInjection('dateTime');
-    }
-
-    protected function getConfig()
-    {
-        return $this->getInjection('config');
-    }
-
-    protected function getTemplateFileManager()
-    {
-        return $this->getInjection('templateFileManager');
-    }
-
     protected function getHtmlizer()
     {
-        if (empty($this->htmlizer)) {
-            $this->htmlizer = new \Espo\Core\Htmlizer\Htmlizer($this->getInjection('fileManager'), $this->getInjection('dateTime'), $this->getInjection('number'), null);
+        if (!$this->htmlizer) {
+            $this->htmlizer = $this->htmlizerFactory->create(true);
         }
         return $this->htmlizer;
     }
@@ -112,21 +115,21 @@ class EmailNotification extends \Espo\Core\Services\Base
         $entityId = $data->entityId;
         $entityType = $data->entityType;
 
-        $user = $this->getEntityManager()->getEntity('User', $userId);
+        $user = $this->entityManager->getEntity('User', $userId);
 
         if (!$user) return;
 
         if ($user->isPortal()) return;
 
-        $preferences = $this->getEntityManager()->getEntity('Preferences', $userId);
+        $preferences = $this->entityManager->getEntity('Preferences', $userId);
         if (!$preferences) return;
         if (!$preferences->get('receiveAssignmentEmailNotifications')) return;
 
         $ignoreList = $preferences->get('assignmentEmailNotificationsIgnoreEntityTypeList') ?? [];
         if (in_array($entityType, $ignoreList)) return;
 
-        $assignerUser = $this->getEntityManager()->getEntity('User', $assignerUserId);
-        $entity = $this->getEntityManager()->getEntity($entityType, $entityId);
+        $assignerUser = $this->entityManager->getEntity('User', $assignerUserId);
+        $entity = $this->entityManager->getEntity($entityType, $entityId);
         if (!$entity) return true;
         if (!$assignerUser) return true;
 
@@ -138,25 +141,30 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         $emailAddress = $user->get('emailAddress');
         if (!empty($emailAddress)) {
-            $email = $this->getEntityManager()->getEntity('Email');
+            $email = $this->entityManager->getEntity('Email');
 
-            $subjectTpl = $this->getTemplateFileManager()->getTemplate('assignment', 'subject', $entity->getEntityType());
-            $bodyTpl = $this->getTemplateFileManager()->getTemplate('assignment', 'body', $entity->getEntityType());
+            $subjectTpl = $this->templateFileManager->getTemplate('assignment', 'subject', $entity->getEntityType());
+            $bodyTpl = $this->templateFileManager->getTemplate('assignment', 'body', $entity->getEntityType());
 
             $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
-            $recordUrl = rtrim($this->getConfig()->get('siteUrl'), '/') . '/#' . $entity->getEntityType() . '/view/' . $entity->id;
+            $recordUrl = rtrim($this->config->get('siteUrl'), '/') .
+                '/#' . $entity->getEntityType() . '/view/' . $entity->id;
 
             $data = [
                 'userName' => $user->get('name'),
                 'assignerUserName' => $assignerUser->get('name'),
                 'recordUrl' => $recordUrl,
-                'entityType' => $this->getLanguage()->translate($entity->getEntityType(), 'scopeNames')
+                'entityType' => $this->language->translate($entity->getEntityType(), 'scopeNames')
             ];
             $data['entityTypeLowerFirst'] = Util::mbLowerCaseFirst($data['entityType']);
 
-            $subject = $this->getHtmlizer()->render($entity, $subjectTpl, 'assignment-email-subject-' . $entity->getEntityType(), $data, true);
-            $body = $this->getHtmlizer()->render($entity, $bodyTpl, 'assignment-email-body-' . $entity->getEntityType(), $data, true);
+            $subject = $this->getHtmlizer()->render(
+                $entity, $subjectTpl, 'assignment-email-subject-' . $entity->getEntityType(), $data, true
+            );
+            $body = $this->getHtmlizer()->render(
+                $entity, $bodyTpl, 'assignment-email-body-' . $entity->getEntityType(), $data, true
+            );
 
             $email->set([
                 'subject' => $subject,
@@ -167,9 +175,11 @@ class EmailNotification extends \Espo\Core\Services\Base
                 'parentId' => $entity->id,
                 'parentType' => $entity->getEntityType()
             ]);
+
             try {
-                $this->getMailSender()->send($email);
-            } catch (\Exception $e) {
+                $this->emailSender->send($email);
+            }
+            catch (Exception $e) {
                 $GLOBALS['log']->error('EmailNotification: [' . $e->getCode() . '] ' .$e->getMessage());
             }
         }
@@ -179,10 +189,10 @@ class EmailNotification extends \Espo\Core\Services\Base
 
     public function process()
     {
-        $mentionEmailNotifications = $this->getConfig()->get('mentionEmailNotifications');
+        $mentionEmailNotifications = $this->config->get('mentionEmailNotifications');
 
-        $streamEmailNotifications = $this->getConfig()->get('streamEmailNotifications');
-        $portalStreamEmailNotifications = $this->getConfig()->get('portalStreamEmailNotifications');
+        $streamEmailNotifications = $this->config->get('streamEmailNotifications');
+        $portalStreamEmailNotifications = $this->config->get('portalStreamEmailNotifications');
 
         $typeList = [];
         if ($mentionEmailNotifications) {
@@ -204,27 +214,40 @@ class EmailNotification extends \Espo\Core\Services\Base
             'emailIsProcessed' => false,
         ];
 
-        $delay = $this->getConfig()->get('emailNotificationsDelay');
+        $delay = $this->config->get('emailNotificationsDelay');
+
         if ($delay) {
             $delayDt = new \DateTime();
             $delayDt->modify('-' . $delay . ' seconds');
             $where[] = ['createdAt<' => $delayDt->format('Y-m-d H:i:s')];
         }
 
-        $sqlArr = [];
+        $queryList = [];
+
         foreach ($typeList as $type) {
             $methodName = 'getNotificationSelectParams' . $type;
             $selectParams = $this->$methodName();
             $selectParams['whereClause'][] = $where;
 
-            $sqlArr[] = $this->getEntityManager()->getQuery()->createSelectQuery('Notification', $selectParams);
+            $selectParams['from'] = 'Notification';
+
+            $queryList[] = Select::fromRaw($selectParams);
         }
 
-        $maxCount = intval(self::PROCESS_MAX_COUNT);
+        $builder = $this->entityManager->getQueryBuilder()
+            ->union()
+            ->order('number')
+            ->limit(0, self::PROCESS_MAX_COUNT);
 
-        $sql = '' . implode(' UNION ', $sqlArr) . " ORDER BY number LIMIT 0, {$maxCount}";
+        foreach ($queryList as $query) {
+            $builder->query($query);
+        }
 
-        $notificationList = $this->getEntityManager()->getRepository('Notification')->findByQuery($sql);
+        $unionQuery = $builder->build();
+
+        $sql = $this->entityManager->getQueryComposer()->compose($unionQuery);
+
+        $notificationList = $this->entityManager->getRepository('Notification')->findBySql($sql);
 
         foreach ($notificationList as $notification) {
             $notification->set('emailIsProcessed', true);
@@ -236,13 +259,13 @@ class EmailNotification extends \Espo\Core\Services\Base
                 $this->$methodName($notification);
             }
 
-            $this->getEntityManager()->saveEntity($notification);
+            $this->entityManager->saveEntity($notification);
         }
     }
 
     protected function getNotificationSelectParamsMentionInPost()
     {
-        $selectManager = $this->getInjection('selectManagerFactory')->create('Notification');
+        $selectManager = $this->selectManagerFactory->create('Notification');
 
         $selectParams = $selectManager->getEmptySelectParams();
 
@@ -253,20 +276,20 @@ class EmailNotification extends \Espo\Core\Services\Base
 
     protected function getNotificationSelectParamsNote()
     {
-        $noteNotificationTypeList = $this->getConfig()->get('streamEmailNotificationsTypeList', []);
+        $noteNotificationTypeList = $this->config->get('streamEmailNotificationsTypeList', []);
 
-        $selectManager = $this->getInjection('selectManagerFactory')->create('Notification');
+        $selectManager = $this->selectManagerFactory->create('Notification');
 
         $selectParams = $selectManager->getEmptySelectParams();
 
         $selectParams['whereClause']['type'] = 'Note';
         $selectParams['whereClause']['relatedType'] = 'Note';
 
-        $selectParams['customJoin'] .= ' JOIN note ON notification.related_id = note.id';
+        $selectManager->addJoin(['Note', 'note', ['note.id:' => 'relatedId']], $selectParams);
 
         $selectParams['whereClause']['note.type'] = $noteNotificationTypeList;
 
-        $entityList = $this->getConfig()->get('streamEmailNotificationsEntityList');
+        $entityList = $this->config->get('streamEmailNotificationsEntityList');
 
         if (empty($entityList)) {
             $selectParams['whereClause']['relatedParentType'] = null;
@@ -277,14 +300,14 @@ class EmailNotification extends \Espo\Core\Services\Base
                         'relatedParentType' => $entityList
                     ],
                     [
-                        'relatedParentType' => null
+                        'relatedParentType' => null,
                     ]
                 ]
             ];
         }
 
-        $forInternal = $this->getConfig()->get('streamEmailNotifications');
-        $forPortal = $this->getConfig()->get('portalStreamEmailNotifications');
+        $forInternal = $this->config->get('streamEmailNotifications');
+        $forPortal = $this->config->get('portalStreamEmailNotifications');
 
         if ($forInternal && !$forPortal) {
             $selectParams['whereClause']['user.type!='] = 'portal';
@@ -299,20 +322,20 @@ class EmailNotification extends \Espo\Core\Services\Base
     {
         if (!$notification->get('userId')) return;
         $userId = $notification->get('userId');
-        $user = $this->getEntityManager()->getEntity('User', $userId);
+        $user = $this->entityManager->getEntity('User', $userId);
 
         if (!$user) return;
 
         $emailAddress = $user->get('emailAddress');
         if (!$emailAddress) return;
 
-        $preferences = $this->getEntityManager()->getEntity('Preferences', $userId);
+        $preferences = $this->entityManager->getEntity('Preferences', $userId);
         if (!$preferences) return;
 
         if (!$preferences->get('receiveMentionEmailNotifications')) return;
 
         if ($notification->get('relatedType') !== 'Note' || !$notification->get('relatedId')) return;
-        $note = $this->getEntityManager()->getEntity('Note', $notification->get('relatedId'));
+        $note = $this->entityManager->getEntity('Note', $notification->get('relatedId'));
         if (!$note) return;
 
         $parentId = $note->get('parentId');
@@ -321,7 +344,7 @@ class EmailNotification extends \Espo\Core\Services\Base
         $data = [];
 
         if ($parentId && $parentType) {
-            $parent = $this->getEntityManager()->getEntity($parentType, $parentId);
+            $parent = $this->entityManager->getEntity($parentType, $parentId);
             if (!$parent) return;
 
             $data['url'] = $this->getSiteUrl($user) . '/#' . $parentType . '/view/' . $parentId;
@@ -338,15 +361,15 @@ class EmailNotification extends \Espo\Core\Services\Base
         $post = \Michelf\Markdown::defaultTransform($post);
         $data['post'] = $post;
 
-        $subjectTpl = $this->getTemplateFileManager()->getTemplate('mention', 'subject');
-        $bodyTpl = $this->getTemplateFileManager()->getTemplate('mention', 'body');
+        $subjectTpl = $this->templateFileManager->getTemplate('mention', 'subject');
+        $bodyTpl = $this->templateFileManager->getTemplate('mention', 'body');
 
         $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
         $subject = $this->getHtmlizer()->render($note, $subjectTpl, 'mention-email-subject', $data, true);
         $body = $this->getHtmlizer()->render($note, $bodyTpl, 'mention-email-body', $data, true);
 
-        $email = $this->getEntityManager()->getEntity('Email');
+        $email = $this->entityManager->getEntity('Email');
 
         $email->set([
             'subject' => $subject,
@@ -363,8 +386,9 @@ class EmailNotification extends \Espo\Core\Services\Base
         }
 
         try {
-            $this->getMailSender()->send($email);
-        } catch (\Exception $e) {
+            $this->emailSender->send($email);
+        }
+        catch (Exception $e) {
             $GLOBALS['log']->error('EmailNotification: [' . $e->getCode() . '] ' .$e->getMessage());
         }
     }
@@ -374,23 +398,23 @@ class EmailNotification extends \Espo\Core\Services\Base
         if ($notification->get('relatedType') !== 'Note') return;
         if (!$notification->get('relatedId')) return;
 
-        $note = $this->getEntityManager()->getEntity('Note', $notification->get('relatedId'));
+        $note = $this->entityManager->getEntity('Note', $notification->get('relatedId'));
         if (!$note) return;
 
-        $noteNotificationTypeList = $this->getConfig()->get('streamEmailNotificationsTypeList', []);
+        $noteNotificationTypeList = $this->config->get('streamEmailNotificationsTypeList', []);
 
         if (!in_array($note->get('type'), $noteNotificationTypeList)) return;
 
         if (!$notification->get('userId')) return;
         $userId = $notification->get('userId');
-        $user = $this->getEntityManager()->getEntity('User', $userId);
+        $user = $this->entityManager->getEntity('User', $userId);
 
         if (!$user) return;
 
         $emailAddress = $user->get('emailAddress');
         if (!$emailAddress) return;
 
-        $preferences = $this->getEntityManager()->getEntity('Preferences', $userId);
+        $preferences = $this->entityManager->getEntity('Preferences', $userId);
         if (!$preferences) return;
         if (!$preferences->get('receiveStreamEmailNotifications')) return;
 
@@ -405,9 +429,9 @@ class EmailNotification extends \Espo\Core\Services\Base
     {
         if (!array_key_exists($entityType, $this->emailNotificationEntityHandlerHash)) {
             $this->emailNotificationEntityHandlerHash[$entityType] = null;
-            $className = $this->getMetadata()->get(['app', 'emailNotifications', 'handlerClassNameMap', $entityType]);
+            $className = $this->metadata->get(['app', 'emailNotifications', 'handlerClassNameMap', $entityType]);
             if ($className && class_exists($className)) {
-                $handler = $this->getInjection('injectableFactory')->createByClassName($className);
+                $handler = $this->injectableFactory->create($className);
                 if ($handler) {
                     $this->emailNotificationEntityHandlerHash[$entityType] = $handler;
                 }
@@ -434,7 +458,7 @@ class EmailNotification extends \Espo\Core\Services\Base
         $data['post'] = $post;
 
         if ($parentId && $parentType) {
-            $parent = $this->getEntityManager()->getEntity($parentType, $parentId);
+            $parent = $this->entityManager->getEntity($parentType, $parentId);
             if (!$parent) return;
 
             $data['url'] = $this->getSiteUrl($user) . '/#' . $parentType . '/view/' . $parentId;
@@ -444,11 +468,11 @@ class EmailNotification extends \Espo\Core\Services\Base
 
             $data['name'] = $data['parentName'];
 
-            $data['entityType'] = $this->getLanguage()->translate($data['parentType'], 'scopeNames');
+            $data['entityType'] = $this->language->translate($data['parentType'], 'scopeNames');
             $data['entityTypeLowerFirst'] = Util::mbLowerCaseFirst($data['entityType']);
 
-            $subjectTpl = $this->getTemplateFileManager()->getTemplate('notePost', 'subject', $parentType);
-            $bodyTpl = $this->getTemplateFileManager()->getTemplate('notePost', 'body', $parentType);
+            $subjectTpl = $this->templateFileManager->getTemplate('notePost', 'subject', $parentType);
+            $bodyTpl = $this->templateFileManager->getTemplate('notePost', 'body', $parentType);
 
             $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
@@ -457,8 +481,8 @@ class EmailNotification extends \Espo\Core\Services\Base
         } else {
             $data['url'] = $this->getSiteUrl($user) . '/#Notification';
 
-            $subjectTpl = $this->getTemplateFileManager()->getTemplate('notePostNoParent', 'subject');
-            $bodyTpl = $this->getTemplateFileManager()->getTemplate('notePostNoParent', 'body');
+            $subjectTpl = $this->templateFileManager->getTemplate('notePostNoParent', 'subject');
+            $bodyTpl = $this->templateFileManager->getTemplate('notePostNoParent', 'body');
 
             $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
@@ -466,7 +490,7 @@ class EmailNotification extends \Espo\Core\Services\Base
             $body = $this->getHtmlizer()->render($note, $bodyTpl, 'note-post-email-body', $data, true);
         }
 
-        $email = $this->getEntityManager()->getEntity('Email');
+        $email = $this->entityManager->getEntity('Email');
 
         $email->set([
             'subject' => $subject,
@@ -483,6 +507,7 @@ class EmailNotification extends \Espo\Core\Services\Base
         }
 
         $smtpParams = null;
+
         if ($parentId && $parentType && !empty($parent)) {
             $handler = $this->getEmailNotificationEntityHandler($parentType);
             if ($handler) {
@@ -497,12 +522,16 @@ class EmailNotification extends \Espo\Core\Services\Base
             }
         }
 
+        $sender = $this->emailSender->create();
+
         try {
             if ($smtpParams) {
-                $this->getMailSender()->setParams($smtpParams);
+                $sender->withSmtpParams($smtpParams);
             }
-            $this->getMailSender()->send($email);
-        } catch (\Exception $e) {
+
+            $sender->send($email);
+        }
+        catch (Exception $e) {
             $GLOBALS['log']->error('EmailNotification: [' . $e->getCode() . '] ' .$e->getMessage());
         }
     }
@@ -514,7 +543,7 @@ class EmailNotification extends \Espo\Core\Services\Base
                 $this->userIdPortalCacheMap[$user->id] = null;
 
                 $portalIdList = $user->getLinkMultipleIdList('portals');
-                $defaultPortalId = $this->getConfig()->get('defaultPortalId');
+                $defaultPortalId = $this->config->get('defaultPortalId');
 
                 $portalId = null;
 
@@ -525,8 +554,8 @@ class EmailNotification extends \Espo\Core\Services\Base
                 }
 
                 if ($portalId) {
-                    $portal = $this->getEntityManager()->getEntity('Portal', $portalId);
-                    $this->getEntityManager()->getRepository('Portal')->loadUrlField($portal);
+                    $portal = $this->entityManager->getEntity('Portal', $portalId);
+                    $this->entityManager->getRepository('Portal')->loadUrlField($portal);
                     $this->userIdPortalCacheMap[$user->id] = $portal;
                 }
             } else {
@@ -539,7 +568,7 @@ class EmailNotification extends \Espo\Core\Services\Base
                 return $url;
             }
         }
-        return $this->getConfig()->getSiteUrl();
+        return $this->config->getSiteUrl();
     }
 
     protected function processNotificationNoteStatus($note, $user)
@@ -554,7 +583,7 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         if (!$parentId || !$parentType) return;
 
-        $parent = $this->getEntityManager()->getEntity($parentType, $parentId);
+        $parent = $this->entityManager->getEntity($parentType, $parentId);
         if (!$parent) return;
 
         $data['url'] = $this->getSiteUrl($user) . '/#' . $parentType . '/view/' . $parentId;
@@ -564,7 +593,7 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         $data['name'] = $data['parentName'];
 
-        $data['entityType'] = $this->getLanguage()->translate($data['parentType'], 'scopeNames');
+        $data['entityType'] = $this->language->translate($data['parentType'], 'scopeNames');
         $data['entityTypeLowerFirst'] = Util::mbLowerCaseFirst($data['entityType']);
 
         $noteData = $note->get('data');
@@ -573,20 +602,20 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         $data['value'] = $noteData->value;
         $data['field'] = $noteData->field;
-        $data['valueTranslated'] = $this->getLanguage()->translateOption($data['value'], $data['field'], $parentType);
-        $data['fieldTranslated'] = $this->getLanguage()->translate($data['field'], 'fields', $parentType);
+        $data['valueTranslated'] = $this->language->translateOption($data['value'], $data['field'], $parentType);
+        $data['fieldTranslated'] = $this->language->translate($data['field'], 'fields', $parentType);
         $data['fieldTranslatedLowerCase'] = Util::mbLowerCaseFirst($data['fieldTranslated']);
 
         $data['userName'] = $note->get('createdByName');
 
-        $subjectTpl = $this->getTemplateFileManager()->getTemplate('noteStatus', 'subject', $parentType);
-        $bodyTpl = $this->getTemplateFileManager()->getTemplate('noteStatus', 'body', $parentType);
+        $subjectTpl = $this->templateFileManager->getTemplate('noteStatus', 'subject', $parentType);
+        $bodyTpl = $this->templateFileManager->getTemplate('noteStatus', 'body', $parentType);
         $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
         $subject = $this->getHtmlizer()->render($note, $subjectTpl, 'note-status-email-subject', $data, true);
         $body = $this->getHtmlizer()->render($note, $bodyTpl, 'note-status-email-body', $data, true);
 
-        $email = $this->getEntityManager()->getEntity('Email');
+        $email = $this->entityManager->getEntity('Email');
 
         $email->set([
             'subject' => $subject,
@@ -599,8 +628,9 @@ class EmailNotification extends \Espo\Core\Services\Base
         ]);
 
         try {
-            $this->getMailSender()->send($email);
-        } catch (\Exception $e) {
+            $this->emailSender->send($email);
+        }
+        catch (Exception $e) {
             $GLOBALS['log']->error('EmailNotification: [' . $e->getCode() . '] ' .$e->getMessage());
         }
     }
@@ -610,7 +640,7 @@ class EmailNotification extends \Espo\Core\Services\Base
         $parentId = $note->get('parentId');
         $parentType = $note->get('parentType');
 
-        $allowedEntityTypeList = $this->getConfig()->get('streamEmailNotificationsEmailReceivedEntityTypeList');
+        $allowedEntityTypeList = $this->config->get('streamEmailNotificationsEmailReceivedEntityTypeList');
         if (
             is_array($allowedEntityTypeList)
             &&
@@ -625,10 +655,10 @@ class EmailNotification extends \Espo\Core\Services\Base
         if (!($noteData instanceof \StdClass)) return;
 
         if (!isset($noteData->emailId)) return;
-        $email = $this->getEntityManager()->getEntity('Email', $noteData->emailId);
+        $email = $this->entityManager->getEntity('Email', $noteData->emailId);
         if (!$email) return;
 
-        $emailRepository = $this->getEntityManager()->getRepository('Email');
+        $emailRepository = $this->entityManager->getRepository('Email');
         $eaList = $user->get('emailAddresses');
         foreach ($eaList as $ea) {
             if (
@@ -656,7 +686,7 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         if (!$parentId || !$parentType) return;
 
-        $parent = $this->getEntityManager()->getEntity($parentType, $parentId);
+        $parent = $this->entityManager->getEntity($parentType, $parentId);
         if (!$parent) return;
 
         $data['url'] = $this->getSiteUrl($user) . '/#' . $parentType . '/view/' . $parentId;
@@ -666,25 +696,25 @@ class EmailNotification extends \Espo\Core\Services\Base
 
         $data['name'] = $data['parentName'];
 
-        $data['entityType'] = $this->getLanguage()->translate($data['parentType'], 'scopeNames');
+        $data['entityType'] = $this->language->translate($data['parentType'], 'scopeNames');
         $data['entityTypeLowerFirst'] = Util::mbLowerCaseFirst($data['entityType']);
 
-        $subjectTpl = $this->getTemplateFileManager()->getTemplate('noteEmailRecieved', 'subject', $parentType);
-        $bodyTpl = $this->getTemplateFileManager()->getTemplate('noteEmailRecieved', 'body', $parentType);
+        $subjectTpl = $this->templateFileManager->getTemplate('noteEmailReceived', 'subject', $parentType);
+        $bodyTpl = $this->templateFileManager->getTemplate('noteEmailReceived', 'body', $parentType);
 
         $subjectTpl = str_replace(["\n", "\r"], '', $subjectTpl);
 
-        $subject = $this->getHtmlizer()->render($note, $subjectTpl, 'note-email-recieved-email-subject-' . $parentType, $data, true);
-        $body = $this->getHtmlizer()->render($note, $bodyTpl, 'note-email-recieved-email-body-' . $parentType, $data, true);
+        $subject = $this->getHtmlizer()->render($note, $subjectTpl, 'note-email-received-email-subject-' . $parentType, $data, true);
+        $body = $this->getHtmlizer()->render($note, $bodyTpl, 'note-email-received-email-body-' . $parentType, $data, true);
 
-        $email = $this->getEntityManager()->getEntity('Email');
+        $email = $this->entityManager->getEntity('Email');
 
         $email->set([
             'subject' => $subject,
             'body' => $body,
             'isHtml' => true,
             'to' => $emailAddress,
-            'isSystem' => true
+            'isSystem' => true,
         ]);
 
         $email->set([
@@ -693,15 +723,17 @@ class EmailNotification extends \Espo\Core\Services\Base
         ]);
 
         try {
-            $this->getMailSender()->send($email);
-        } catch (\Exception $e) {
+            $this->emailSender->send($email);
+        }
+        catch (Exception $e) {
             $GLOBALS['log']->error('EmailNotification: [' . $e->getCode() . '] ' .$e->getMessage());
         }
     }
 
     protected function loadParentNameFields(Entity $entity)
     {
-        $fieldDefs = $this->getMetadata()->get(['entityDefs', $entity->getEntityType(), 'fields'], []);
+        $fieldDefs = $this->metadata->get(['entityDefs', $entity->getEntityType(), 'fields'], []);
+
         foreach ($fieldDefs as $field => $defs) {
             if (isset($defs['type']) && $defs['type'] == 'linkParent') {
                 $entity->loadParentNameField($field);

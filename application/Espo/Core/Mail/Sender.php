@@ -29,24 +29,48 @@
 
 namespace Espo\Core\Mail;
 
-use Espo\Entities\Email;
+use Laminas\{
+    Mime\Message as MimeMessage,
+    Mime\Part as MimePart,
+    Mime\Mime as Mime,
+    Mail\Header\Sender as SenderHeader,
+    Mail\Header\MessageId as MessageIdHeader,
+    Mail\Header\ContentType as ContentTypeHeader,
+    Mail\Message,
+    Mail\Transport\SmtpOptions,
+    Mail\Transport\Envelope,
+    Mail\Protocol\Exception\RuntimeException as ProtocolRuntimeException,
+};
 
-use Zend\Mime\Message as MimeMessage;
-use Zend\Mime\Part as MimePart;
-use Zend\Mime\Mime as Mime;
+use Espo\Entities\{
+    Email,
+    InboundEmail,
+};
 
-use Zend\Mail\Message;
-use Zend\Mail\Transport\Smtp as SmtpTransport;
-use Zend\Mail\Transport\SmtpOptions;
-use Zend\Mail\Transport\Envelope;
+use Espo\Services\InboundEmail as InboundEmailService;
 
-use Espo\Core\Exceptions\Error;
+use Espo\Core\{
+    Exceptions\Error,
+    Utils\Config,
+    ORM\EntityManager,
+    ServiceFactory,
+};
 
+use Traversable;
+use Exception;
+
+/**
+ * Sends emails. Builds parameters for sending. Should not be used directly.
+ */
 class Sender
 {
     protected $config;
 
     protected $entityManager;
+
+    protected $serviceFactory;
+
+    protected $transportFactory;
 
     protected $transport;
 
@@ -54,41 +78,162 @@ class Sender
 
     protected $params = [];
 
-    public function __construct($config, $entityManager)
-    {
+    protected $overrideParams = [];
+
+    private $systemInboundEmail = null;
+
+    private $inboundEmailService = null;
+
+    private $systemInboundEmailIsCached = false;
+
+    private $envelope = null;
+
+    private $message = null;
+
+    private $attachmentList = null;
+
+    public function __construct(
+        Config $config,
+        EntityManager $entityManager,
+        ServiceFactory $serviceFactory,
+        SmtpTransportFactory $transportFactory,
+        ?InboundEmailService $inboundEmailService = null,
+        ?InboundEmail $systemInboundEmail = null
+    ) {
         $this->config = $config;
         $this->entityManager = $entityManager;
+        $this->serviceFactory = $serviceFactory;
+        $this->transportFactory = $transportFactory;
+
+        $this->inboundEmailService = $inboundEmailService;
+        $this->systemInboundEmail = $systemInboundEmail;
+
+        if ($inboundEmailService) {
+            $this->systemInboundEmailIsCached = true;
+        }
+
         $this->useGlobal();
     }
 
-    protected function getConfig()
-    {
-        return $this->config;
-    }
-
-    protected function getEntityManager()
-    {
-        return $this->entityManager;
-    }
-
+    /**
+     * @deprecated
+     */
     public function resetParams() : self
     {
         $this->params = [];
+        $this->envelope = null;
+        $this->message = null;
+        $this->attachmentList = null;
+        $this->overrideParams = [];
+
         return $this;
     }
 
+    /**
+     * With parameters.
+     *
+     * Available parameters: fromAddress, fromName, replyToAddress, replyToName.
+     */
+    public function withParams(array $params) : self
+    {
+        $paramList = [
+            'fromAddress',
+            'fromName',
+            'replyToAddress',
+            'replyToName',
+        ];
+
+        foreach ($params as $key => $value) {
+            if (! in_array($key, $paramList)) {
+                unset($params[$key]);
+            }
+        }
+
+        $this->overrideParams = array_merge($this->overrideParams, $params);
+
+        return $this;
+    }
+
+    /**
+     * With specific SMTP parameters.
+     */
+    public function withSmtpParams(array $params) : self
+    {
+        return $this->useSmtp($params);
+    }
+
+    /**
+     * With specific attachments.
+     */
+    public function withAttachments(iterable $attachmentList) : self
+    {
+        $this->attachmentList = $attachmentList;
+
+        return $this;
+    }
+
+    /**
+     * With envelope options.
+     */
+    public function withEnvelopeOptions(array $options) : self
+    {
+        return $this->setEnvelopeOptions($options);
+    }
+
+    /**
+     * Set a message instance.
+     */
+    public function withMessage(Message $message) : self
+    {
+        $this->message = $message;
+
+        return $this;
+    }
+
+    /**
+     * Set params.
+     *
+     * @deprecated
+     */
     public function setParams(array $params = []) : self
     {
         $this->params = array_merge($this->params, $params);
+
         return $this;
     }
 
+
+    /**
+     * Use specific SMTP parameters.
+     *
+     * @deprecated
+     */
     public function useSmtp(array $params = []) : self
     {
         $this->isGlobal = false;
+        $this->applySmtp($params);
+
+        return $this;
+    }
+
+    /**
+     * Use the system SMTP parameters.
+     *
+     * @deprecated
+     */
+    public function useGlobal() : self
+    {
+        $this->params = [];
+        $this->isGlobal = true;
+
+        return $this;
+    }
+
+    protected function applySmtp(array $params = [])
+    {
         $this->params = $params;
 
-        $this->transport = new SmtpTransport();
+        $this->transport = $this->transportFactory->create();
 
         $config = $this->config;
 
@@ -106,181 +251,207 @@ class Sender
             $options['connectionConfig'][$key] = $value;
         }
 
-        if ($params['auth']) {
-            if (!empty($params['smtpAuthMechanism'])) {
-                $smtpAuthMechanism = preg_replace("([\.]{2,})", '', $params['smtpAuthMechanism']);
-                if (in_array($smtpAuthMechanism, ['login', 'crammd5', 'plain'])) {
-                    $options['connectionClass'] = $smtpAuthMechanism;
+        if ($params['auth'] ?? false) {
+            $authMechanism = $params['authMechanism'] ?? $params['smtpAuthMechanism'] ?? null;
+
+            if ($authMechanism) {
+                $authMechanism = preg_replace("([\.]{2,})", '', $authMechanism);
+
+                if (in_array($authMechanism, ['login', 'crammd5', 'plain'])) {
+                    $options['connectionClass'] = $authMechanism;
                 } else {
                     $options['connectionClass'] = 'login';
                 }
             } else {
                 $options['connectionClass'] = 'login';
             }
+
             $options['connectionConfig']['username'] = $params['username'];
             $options['connectionConfig']['password'] = $params['password'];
         }
 
-        if (!empty($params['smtpAuthClassName'])) {
-            $options['connectionClass'] = $params['smtpAuthClassName'];
+        $authClassName = $params['authClassName'] ?? $params['smtpAuthClassName'] ?? null;
+
+        if ($authClassName) {
+            $options['connectionClass'] = $authClassName;
         }
 
-        if ($params['security']) {
+        if ($params['security'] ?? null) {
             $options['connectionConfig']['ssl'] = strtolower($params['security']);
         }
 
         if (array_key_exists('fromName', $params)) {
             $this->params['fromName'] = $params['fromName'];
         }
+
         if (array_key_exists('fromAddress', $params)) {
             $this->params['fromAddress'] = $params['fromAddress'];
         }
 
-        $smtpOptions = new SmtpOptions($options);
-        $this->transport->setOptions($smtpOptions);
+        $this->transport->setOptions(
+            new SmtpOptions($options)
+        );
 
-        return $this;
+        if ($this->envelope) {
+            $this->transport->setEnvelope($this->envelope);
+        }
     }
 
-    public function useGlobal()
+    protected function applyGlobal()
     {
-        $this->params = [];
-        if ($this->isGlobal) {
-            return $this;
-        }
-
-        $this->transport = new SmtpTransport();
-
         $config = $this->config;
 
-        $localHostName = $config->get('smtpLocalHostName', gethostname());
+        if (!$config->get('smtpServer') && $config->get('outboundEmailFromAddress')) {
+            $inboundEmail = $this->getSystemInboundEmail();
 
-        $options = [
-            'name' => $localHostName,
-            'host' => $config->get('smtpServer'),
+            if ($inboundEmail) {
+                $service = $this->getInboundEmailService();
+
+                if ($service) {
+                    $params = $service->getSmtpParamsFromAccount($inboundEmail);
+                    $this->applySmtp($params);
+
+                    return;
+                }
+            }
+        }
+
+        $this->applySmtp([
+            'server' => $config->get('smtpServer'),
             'port' => $config->get('smtpPort'),
-            'connection_config' => [],
-        ];
-        if ($config->get('smtpAuth')) {
-            $options['connection_class'] = $config->get('smtpAuthMechanism', 'login');
-            $options['connection_config']['username'] = $config->get('smtpUsername');
-            $options['connection_config']['password'] = $config->get('smtpPassword');
-        }
-        if ($config->get('smtpSecurity')) {
-            $options['connection_config']['ssl'] = strtolower($config->get('smtpSecurity'));
-        }
-
-        $smtpOptions = new SmtpOptions($options);
-        $this->transport->setOptions($smtpOptions);
-
-        $this->isGlobal = true;
-
-        return $this;
+            'auth' => $config->get('smtpAuth'),
+            'authMechanism' => $config->get('smtpAuthMechanism', 'login'),
+            'username' => $config->get('smtpUsername'),
+            'password' => $config->get('smtpPassword'),
+            'security' => $config->get('smtpSecurity'),
+        ]);
     }
 
-    public function send(Email $email, ?array $params = [], $message = null, $attachmentList = [])
+    /**
+     * @deprecated
+     */
+    public function hasSystemSmtp()
     {
-        if (!$message) {
-            $message = new Message();
+        if ($this->config->get('smtpServer')) {
+            return true;
         }
+
+        if ($this->getSystemInboundEmail()) {
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function getSystemInboundEmail()
+    {
+        $address = $this->config->get('outboundEmailFromAddress');
+
+        if (!$this->systemInboundEmailIsCached && $address) {
+            $this->systemInboundEmail = $this->entityManager->getRepository('InboundEmail')->where([
+                'status' => 'Active',
+                'useSmtp' => true,
+                'emailAddress' => $address,
+            ])->findOne();
+        }
+
+        $this->systemInboundEmailIsCached = true;
+
+        return $this->systemInboundEmail;
+    }
+
+    protected function getInboundEmailService()
+    {
+        if (!$this->serviceFactory) {
+            return null;
+        }
+
+        if (!$this->inboundEmailService) {
+            $this->inboundEmailService = $this->serviceFactory->create('InboundEmail');
+        }
+
+        return $this->inboundEmailService;
+    }
+
+    /**
+     * Send an email.
+     *
+     * @param $params @deprecated
+     * @param $message @deprecated
+     * @param $attachmentList @deprecated
+     */
+    public function send(Email $email, ?array $params = [], ?Message $message = null, iterable $attachmentList = [])
+    {
+        if ($this->isGlobal) {
+            $this->applyGlobal();
+        }
+
+        $message = $this->message ?? $message ?? new Message();
+
         $params = $params ?? [];
 
         $config = $this->config;
-        $params = $params + $this->params;
+
+        $params = array_merge(
+            $this->params,
+            $params,
+            $this->overrideParams
+        );
+
+        $fromName = $params['fromName'] ?? $config->get('outboundEmailFromName');
 
         if ($email->get('from')) {
-            $fromName = null;
-            if (!empty($params['fromName'])) {
-                $fromName = $params['fromName'];
-            } else {
-                $fromName = $config->get('outboundEmailFromName');
-            }
-
-            $message->addFrom(trim($email->get('from')), $fromName);
-
-            $fromAddress = trim($email->get('from'));
+            $fromAddress = trim(
+                $email->get('from')
+            );
         } else {
-            if (!empty($params['fromAddress'])) {
-                $fromAddress = $params['fromAddress'];
-            } else {
-                if (!$config->get('outboundEmailFromAddress')) {
-                    throw new Error('outboundEmailFromAddress is not specified in config.');
-                }
-                $fromAddress = $config->get('outboundEmailFromAddress');
+            if (empty($params['fromAddress']) && !$config->get('outboundEmailFromAddress')) {
+                throw new Error('outboundEmailFromAddress is not specified in config.');
             }
 
-            if (!empty($params['fromName'])) {
-                $fromName = $params['fromName'];
-            } else {
-                $fromName = $config->get('outboundEmailFromName');
-            }
-
-            $message->addFrom($fromAddress, $fromName);
+            $fromAddress = $params['fromAddress'] ?? $config->get('outboundEmailFromAddress');
 
             $email->set('from', $fromAddress);
         }
 
+        $message->addFrom($fromAddress, $fromName);
+
         $fromString = '<' . $fromAddress . '>';
+
         if ($fromName) {
             $fromString = $fromName . ' ' . $fromString;
         }
+
         $email->set('fromString', $fromString);
 
-        $sender = new \Zend\Mail\Header\Sender();
-        $sender->setAddress($email->get('from'));
-        $message->getHeaders()->addHeader($sender);
+        $senderHeader = new SenderHeader();
+
+        $senderHeader->setAddress($fromAddress);
+
+        $message->getHeaders()
+            ->addHeader($senderHeader);
 
         if (!empty($params['replyToAddress'])) {
-            $replyToName = null;
-            if (!empty($params['replyToName'])) {
-                $replyToName = $params['replyToName'];
-            }
-            $message->setReplyTo($params['replyToAddress'], $replyToName);
+            $message->setReplyTo(
+                $params['replyToAddress'],
+                $params['replyToName'] ?? null
+            );
         }
 
-        $value = $email->get('to');
-        if ($value) {
-            $arr = explode(';', $value);
-            if (is_array($arr)) {
-                foreach ($arr as $address) {
-                    $message->addTo(trim($address));
-                }
-            }
-        }
+        $this->addAddresses($email, $message);
 
-        $value = $email->get('cc');
-        if ($value) {
-            $arr = explode(';', $value);
-            if (is_array($arr)) {
-                foreach ($arr as $address) {
-                    $message->addCC(trim($address));
-                }
-            }
-        }
+        $attachmentPartList = [];
 
-        $value = $email->get('bcc');
-        if ($value) {
-            $arr = explode(';', $value);
-            if (is_array($arr)) {
-                foreach ($arr as $address) {
-                    $message->addBCC(trim($address));
-                }
-            }
-        }
+        $attachmentCollection = null;
 
-        $value = $email->get('replyTo');
-        if ($value) {
-            $arr = explode(';', $value);
-            if (is_array($arr)) {
-                foreach ($arr as $address) {
-                    $message->addReplyTo(trim($address));
-                }
+        if (!$email->isNew()) {
+            $attachmentCollection = $this->entityManager
+                ->getRepository('Email')
+                ->getRelation($email, 'attachments')
+                ->find();
             }
-        }
 
-        $attachmentPartList = array();
-        $attachmentCollection = $email->get('attachments');
-        $attachmentInlineCollection = $email->getInlineAttachments();
+        $attachmentList = $this->attachmentList ?? $attachmentList ?? [];
 
         foreach ($attachmentList as $attachment) {
             $attachmentCollection[] = $attachment;
@@ -291,41 +462,58 @@ class Sender
                 if ($a->get('contents')) {
                     $contents = $a->get('contents');
                 } else {
-                    $fileName = $this->getEntityManager()->getRepository('Attachment')->getFilePath($a);
-                    if (!is_file($fileName)) continue;
+                    $fileName = $this->entityManager
+                        ->getRepository('Attachment')
+                        ->getFilePath($a);
+
+                    if (!is_file($fileName)) {
+                        continue;
+                    }
+
                     $contents = file_get_contents($fileName);
                 }
+
                 $attachment = new MimePart($contents);
+
                 $attachment->disposition = Mime::DISPOSITION_ATTACHMENT;
                 $attachment->encoding = Mime::ENCODING_BASE64;
                 $attachment->filename ='=?utf-8?B?' . base64_encode($a->get('name')) . '?=';
+
                 if ($a->get('type')) {
                     $attachment->type = $a->get('type');
                 }
+
                 $attachmentPartList[] = $attachment;
             }
         }
 
-        if (!empty($attachmentInlineCollection)) {
-            foreach ($attachmentInlineCollection as $a) {
+        $attachmentInlineList = $email->getInlineAttachments();
+
+        if (!empty($attachmentInlineList)) {
+            foreach ($attachmentInlineList as $a) {
                 if ($a->get('contents')) {
                     $contents = $a->get('contents');
                 } else {
-                    $fileName = $this->getEntityManager()->getRepository('Attachment')->getFilePath($a);
-                    if (!is_file($fileName)) continue;
+                    $fileName = $this->entityManager->getRepository('Attachment')->getFilePath($a);
+
+                    if (!is_file($fileName)) {
+                        continue;
+                    }
+
                     $contents = file_get_contents($fileName);
                 }
+
                 $attachment = new MimePart($contents);
                 $attachment->disposition = Mime::DISPOSITION_INLINE;
                 $attachment->encoding = Mime::ENCODING_BASE64;
                 $attachment->id = $a->id;
+
                 if ($a->get('type')) {
                     $attachment->type = $a->get('type');
                 }
                 $attachmentPartList[] = $attachment;
             }
         }
-
 
         $message->setSubject($email->get('name'));
 
@@ -363,7 +551,6 @@ class Sender
             foreach ($attachmentPartList as $attachmentPart) {
                 $body->addPart($attachmentPart);
             }
-
         } else {
             if ($email->get('isHtml')) {
                 $body->setParts([$textPart, $htmlPart]);
@@ -380,12 +567,14 @@ class Sender
             if ($message->getHeaders()->has('content-type')) {
                 $message->getHeaders()->removeHeader('content-type');
             }
+
             $message->getHeaders()->addHeaderLine('Content-Type', 'text/plain; charset=UTF-8');
         } else {
             if (!$message->getHeaders()->has('content-type')) {
-                $contentTypeHeader = new \Zend\Mail\Header\ContentType();
+                $contentTypeHeader = new ContentTypeHeader();
                 $message->getHeaders()->addHeader($contentTypeHeader);
             }
+
             $message->getHeaders()->get('content-type')->setType($messageType);
         }
 
@@ -393,33 +582,66 @@ class Sender
 
         try {
             $messageId = $email->get('messageId');
+
             if (empty($messageId) || !is_string($messageId) || strlen($messageId) < 4 || strpos($messageId, 'dummy:') === 0) {
                 $messageId = $this->generateMessageId($email);
                 $email->set('messageId', '<' . $messageId . '>');
+
                 if ($email->id) {
-                    $this->getEntityManager()->saveEntity($email, ['silent' => true]);
+                    $this->entityManager->saveEntity($email, ['silent' => true]);
                 }
             } else {
                 $messageId = substr($messageId, 1, strlen($messageId) - 2);
             }
 
-            $messageIdHeader = new \Zend\Mail\Header\MessageId();
+            $messageIdHeader = new MessageIdHeader();
+
             $messageIdHeader->setId($messageId);
+
             $message->getHeaders()->addHeader($messageIdHeader);
 
             $this->transport->send($message);
 
             $email->set('status', 'Sent');
             $email->set('dateSent', date("Y-m-d H:i:s"));
-        } catch (\Exception $e) {
+        }
+        catch (Exception $e) {
+            $this->resetParams();
             $this->useGlobal();
-            throw new Error($e->getMessage(), 500);
+
+            $this->handleException($e);
+
+            return;
         }
 
+        $this->resetParams();
         $this->useGlobal();
     }
 
-    static public function generateMessageId(Email $email)
+    protected function handleException(Exception $e)
+    {
+        if ($e instanceof ProtocolRuntimeException) {
+            $message = "Email sending error.";
+
+            if (
+                stripos($e->getMessage(), 'password') !== false
+                ||
+                stripos($e->getMessage(), 'credentials') !== false
+                ||
+                stripos($e->getMessage(), '5.7.8') !== false
+            ) {
+                $message .= ' Invalid credentials.';
+            }
+
+            $GLOBALS['log']->error("Email sending error. " . $e->getMessage());
+
+            throw new Error($message, 500);
+        }
+
+        throw new Error($e->getMessage(), 500);
+    }
+
+    static public function generateMessageId(Email $email) : string
     {
         $rand = mt_rand(1000, 9999);
 
@@ -428,6 +650,7 @@ class Sender
         } else {
             $messageId = '' . md5($email->get('name')) . '/' . time() . '/' . $rand .  '@espo';
         }
+
         if ($email->get('isSystem')) {
             $messageId .= '-system';
         }
@@ -435,9 +658,64 @@ class Sender
         return $messageId;
     }
 
+    /**
+     * @deprecated
+     */
     public function setEnvelopeOptions(array $options) : self
     {
-        $this->transport->setEnvelope(new Envelope($options));
+        $this->envelope = new Envelope($options);
+
         return $this;
+    }
+
+    protected function addAddresses(Email $email, Message $message)
+    {
+        $value = $email->get('to');
+
+        if ($value) {
+            $arr = explode(';', $value);
+
+            foreach ($arr as $address) {
+                $message->addTo(
+                    trim($address)
+                );
+            }
+        }
+
+        $value = $email->get('cc');
+
+        if ($value) {
+            $arr = explode(';', $value);
+
+            foreach ($arr as $address) {
+                $message->addCC(
+                    trim($address)
+                );
+            }
+        }
+
+        $value = $email->get('bcc');
+
+        if ($value) {
+            $arr = explode(';', $value);
+
+            foreach ($arr as $address) {
+                $message->addBCC(
+                    trim($address)
+                );
+            }
+        }
+
+        $value = $email->get('replyTo');
+
+        if ($value) {
+            $arr = explode(';', $value);
+
+            foreach ($arr as $address) {
+                $message->addReplyTo(
+                    trim($address)
+                );
+            }
+        }
     }
 }

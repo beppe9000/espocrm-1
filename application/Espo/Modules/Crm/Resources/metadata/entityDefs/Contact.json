@@ -21,47 +21,104 @@
             "default":"",
             "trim": true
         },
-        "accountId": {
+        "accountAnyId": {
+            "notStorable": true,
+            "customizationDisabled": true,
+            "disabled": true,
             "type": "varchar",
             "where": {
-                "=": "contact.id IN (SELECT contact_id FROM account_contact WHERE deleted = 0 AND account_id = {value})",
-                "<>": "contact.id NOT IN (SELECT contact_id FROM account_contact WHERE deleted = 0 AND account_id = {value})",
-                "IN": "contact.id IN (SELECT contact_id FROM account_contact WHERE deleted = 0 AND account_id IN {value})",
-                "NOT IN": "contact.id NOT IN (SELECT contact_id FROM account_contact WHERE deleted = 0 AND account_id IN {value})",
-                "IS NULL": "contact.account_id IS NULL",
-                "IS NOT NULL": "contact.account_id IS NOT NULL"
-            },
-            "customizationDisabled": true,
-            "disabled": true
+                "=": {
+                    "whereClause": {
+                        "id=s": {
+                            "from": "AccountContact",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": 0,
+                                "accountId": "{value}"
+                            }
+                        }
+                    }
+                },
+                "<>": {
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "AccountContact",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": 0,
+                                "accountId": "{value}"
+                            }
+                        }
+                    }
+                },
+                "IN": {
+                    "whereClause": {
+                        "id=s": {
+                            "from": "AccountContact",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": 0,
+                                "accountId": "{value}"
+                            }
+                        }
+                    }
+                },
+                "NOT IN": {
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "AccountContact",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": 0,
+                                "accountId": "{value}"
+                            }
+                        }
+                    }
+                },
+                "IS NULL": {
+                    "whereClause": {
+                        "accountId": null
+                    }
+                },
+                "IS NOT NULL": {
+                    "whereClause": {
+                        "accountId!=": null
+                    }
+                }
+            }
         },
         "title": {
             "type": "varchar",
             "maxLength": 100,
+            "view": "crm:views/contact/fields/title",
+            "directUpdateDisabled": true,
             "notStorable": true,
             "select": {
-                "sql": "accountContact.role",
+                "select": "accountContactPrimary.role",
                 "leftJoins": [
                     [
                         "AccountContact",
-                        "accountContact",
+                        "accountContactPrimary",
                         {
-                            "contact.id:": "accountContact.contactId",
-                            "contact.accountId:": "accountContact.accountId",
-                            "accountContact.deleted": false
+                            "contact.id:": "accountContactPrimary.contactId",
+                            "contact.accountId:": "accountContactPrimary.accountId",
+                            "accountContactPrimary.deleted": false
                         }
                     ]
                 ]
             },
-            "orderBy": {
-                "sql": "accountContact.role {direction}",
+            "order": {
+                "order": [
+                    ["accountContactPrimary.role", "{direction}"]
+                ],
                 "leftJoins": [
                     [
                         "AccountContact",
-                        "accountContact",
+                        "accountContactPrimary",
                         {
-                            "contact.id:": "accountContact.contactId",
-                            "contact.accountId:": "accountContact.accountId",
-                            "accountContact.deleted": false
+                            "contact.id:": "accountContactPrimary.contactId",
+                            "contact.accountId:": "accountContactPrimary.accountId",
+                            "accountContactPrimary.deleted": false
                         }
                     ]
                 ]
@@ -69,31 +126,49 @@
             "where": {
                 "LIKE": {
                     "leftJoins": ["accounts"],
-                    "sql": "accountsMiddle.role LIKE {value}",
+                    "whereClause": {
+                        "accountsMiddle.role*": "{value}"
+                    },
+                    "distinct": true
+                },
+                "NOT LIKE": {
+                    "leftJoins": ["accounts"],
+                    "whereClause": {
+                        "accountsMiddle.role!*": "{value}"
+                    },
                     "distinct": true
                 },
                 "=": {
                     "leftJoins": ["accounts"],
-                    "sql": "accountsMiddle.role = {value}",
+                    "whereClause": {
+                        "accountsMiddle.role": "{value}"
+                    },
                     "distinct": true
                 },
                 "<>": {
                     "leftJoins": ["accounts"],
-                    "sql": "accountsMiddle.role <> {value}",
+                    "whereClause": {
+                        "accountsMiddle.role!=": "{value}"
+                    },
                     "distinct": true
                 },
                 "IS NULL": {
                     "leftJoins": ["accounts"],
-                    "sql": "accountsMiddle.role IS NULL",
+                    "whereClause": {
+                        "accountsMiddle.role=": null
+                    },
                     "distinct": true
                 },
                 "IS NOT NULL": {
                     "leftJoins": ["accounts"],
-                    "sql": "accountsMiddle.role IS NOT NULL",
+                    "whereClause": {
+                        "accountsMiddle.role!=": null
+                    },
                     "distinct": true
                 }
             },
             "trim": true,
+            "customizationOptionsDisabled": true,
             "textFilterDisabled": true
         },
         "description": {
@@ -153,6 +228,7 @@
         "accountRole": {
             "type": "varchar",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutDetailDisabled": true,
             "layoutMassUpdateDisabled": true,
             "layoutFiltersDisabled": true,
@@ -160,35 +236,39 @@
             "exportDisabled": true,
             "importDisabled": true,
             "view": "crm:views/contact/fields/account-role",
+            "customizationOptionsDisabled": true,
             "textFilterDisabled": true
         },
         "accountIsInactive": {
             "type": "bool",
             "notStorable": true,
+            "mergeDisabled": true,
             "select": {
-                "sql": "accountContact.is_inactive",
+                "select": "accountContactPrimary.isInactive",
                 "leftJoins": [
                     [
                         "AccountContact",
-                        "accountContact",
+                        "accountContactPrimary",
                         {
-                            "contact.id:": "accountContact.contactId",
-                            "contact.accountId:": "accountContact.accountId",
-                            "accountContact.deleted": false
+                            "contact.id:": "accountContactPrimary.contactId",
+                            "contact.accountId:": "accountContactPrimary.accountId",
+                            "accountContactPrimary.deleted": false
                         }
                     ]
                 ]
             },
-            "orderBy": {
-                "sql": "accountContact.is_inactive {direction}",
+            "order": {
+                "order": [
+                    ["accountContactPrimary.isInactive", "{direction}"]
+                ],
                 "leftJoins": [
                     [
                         "AccountContact",
-                        "accountContact",
+                        "accountContactPrimary",
                         {
-                            "contact.id:": "accountContact.contactId",
-                            "contact.accountId:": "accountContact.accountId",
-                            "accountContact.deleted": false
+                            "contact.id:": "accountContactPrimary.contactId",
+                            "contact.accountId:": "accountContactPrimary.accountId",
+                            "accountContactPrimary.deleted": false
                         }
                     ]
                 ]
@@ -199,20 +279,39 @@
                         [
                             "AccountContact",
                             "accountContactFilterIsInactive",
-                            {"contact.accountId:": "accountContactFilterIsInactive.accountId"}
+                            {
+                                "accountContactFilterIsInactive.contactId:": "id",
+                                "accountContactFilterIsInactive.accountId:": "accountId",
+                                "accountContactFilterIsInactive.deleted": false
+                            }
                         ]
                     ],
-                    "sql": "accountContactFilterIsInactive.is_inactive = true"
+                    "whereClause": {
+                        "accountContactFilterIsInactive.isInactive": true
+                    }
                 },
                 "= FALSE": {
                     "leftJoins": [
                         [
                             "AccountContact",
                             "accountContactFilterIsInactive",
-                            {"contact.accountId:": "accountContactFilterIsInactive.accountId"}
+                            {
+                                "accountContactFilterIsInactive.contactId:": "id",
+                                "accountContactFilterIsInactive.accountId:": "accountId",
+                                "accountContactFilterIsInactive.deleted": false
+                            }
                         ]
                     ],
-                    "sql": "accountContactFilterIsInactive.is_inactive <> true OR accountContactFilterIsInactive.is_inactive IS NULL"
+                    "whereClause": {
+                        "OR": [
+                            {
+                                "accountContactFilterIsInactive.isInactive!=": true
+                            },
+                            {
+                                "accountContactFilterIsInactive.isInactive=": null
+                            }
+                        ]
+                    }
                 }
             },
             "layoutListDisabled": true,
@@ -239,28 +338,76 @@
             "customizationReadOnlyDisabled": true,
             "where": {
                 "=": {
+                    "whereClause": {
+                        "opportunitiesMiddle.role": "{value}"
+                    },
                     "leftJoins": ["opportunities"],
-                    "sql": "opportunitiesMiddle.role = {value}",
                     "distinct": true
                 },
-                "<>": "contact.id NOT IN (SELECT contact_id FROM contact_opportunity WHERE deleted = 0 AND role = {value})",
+                "<>": {
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "ContactOpportunity",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": false,
+                                "role": "{value}"
+                            }
+                        }
+                    }
+                },
                 "IN": {
                     "leftJoins": ["opportunities"],
-                    "sql": "opportunitiesMiddle.role IN {value}",
+                    "whereClause": {
+                        "opportunitiesMiddle.role": "{value}"
+                    },
                     "distinct": true
                 },
-                "NOT IN": "contact.id NOT IN (SELECT contact_id FROM contact_opportunity WHERE deleted = 0 AND role IN {value})",
+                "NOT IN": {
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "ContactOpportunity",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": false,
+                                "role": "{value}"
+                            }
+                        }
+                    }
+                },
                 "LIKE": {
                     "leftJoins": ["opportunities"],
-                    "sql": "opportunitiesMiddle.role LIKE {value}",
+                    "whereClause": {
+                        "opportunitiesMiddle.role*": "{value}"
+                    },
+                    "distinct": true
+                },
+                "NOT LIKE": {
+                    "leftJoins": ["opportunities"],
+                    "whereClause": {
+                        "opportunitiesMiddle.role!*": "{value}"
+                    },
                     "distinct": true
                 },
                 "IS NULL": {
                     "leftJoins": ["opportunities"],
-                    "sql": "opportunitiesMiddle.role IS NULL",
+                    "whereClause": {
+                        "opportunitiesMiddle.role": null
+                    },
                     "distinct": true
                 },
-                "IS NOT NULL": "contact.id NOT IN (SELECT contact_id FROM contact_opportunity WHERE deleted = 0 AND role IS NULL)"
+                "IS NOT NULL": {
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "ContactOpportunity",
+                            "select": ["contactId"],
+                            "whereClause": {
+                                "deleted": false,
+                                "role": null
+                            }
+                        }
+                    }
+                }
             },
             "view": "crm:views/contact/fields/opportunity-role"
         },
@@ -273,6 +420,7 @@
         "acceptanceStatusMeetings": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -283,6 +431,7 @@
         "acceptanceStatusCalls": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -345,6 +494,40 @@
             "notStorable": true,
             "view": "views/fields/link-one"
         },
+        "hasPortalUser": {
+            "type": "bool",
+            "notStorable": true,
+            "readOnly": true,
+            "mergeDisabled": true,
+            "customizationDefaultDisabled": true,
+            "customizationReadOnlyDisabled": true,
+            "foreignAccessDisabled": true,
+            "select": {
+                "select": "IS_NOT_NULL:(portalUser.id)",
+                "leftJoins": [["portalUser", "portalUser"]]
+            },
+            "where": {
+                "= TRUE": {
+                    "whereClause": {
+                        "portalUser.id!=": null
+                    },
+                    "leftJoins": [["portalUser", "portalUser"]]
+                },
+                "= FALSE": {
+                    "whereClause": {
+                        "portalUser.id=": null
+                    },
+                    "leftJoins": [["portalUser", "portalUser"]]
+                }
+            },
+            "order": {
+                "order": [
+                    ["portalUser.id", "{direction}"]
+                ],
+                "leftJoins": [["portalUser", "portalUser"]],
+                "additionalSelect": ["portalUser.id"]
+            }
+        },
         "originalLead": {
             "type": "linkOne",
             "readOnly": true,
@@ -395,12 +578,19 @@
                 }
             },
             "additionalAttributeList": ["columns"],
-            "layoutRelationshipsDisabled": true
+            "layoutRelationshipsDisabled": true,
+            "columnAttributeMap": {
+                "role": "accountRole",
+                "isInactive": "accountIsInactive"
+            }
         },
         "opportunities": {
             "type": "hasMany",
             "entity": "Opportunity",
-            "foreign": "contacts"
+            "foreign": "contacts",
+            "columnAttributeMap": {
+                "role": "opportunityRole"
+            }
         },
         "opportunitiesPrimary": {
             "type": "hasMany",
@@ -424,14 +614,20 @@
             "entity": "Meeting",
             "foreign": "contacts",
             "layoutRelationshipsDisabled": true,
-            "audited": true
+            "audited": true,
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "calls": {
             "type": "hasMany",
             "entity": "Call",
             "foreign": "contacts",
             "layoutRelationshipsDisabled": true,
-            "audited": true
+            "audited": true,
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "tasks": {
             "type": "hasChildren",
@@ -460,7 +656,10 @@
         "targetLists": {
             "type": "hasMany",
             "entity": "TargetList",
-            "foreign": "contacts"
+            "foreign": "contacts",
+            "columnAttributeMap": {
+                "optedOut": "targetListIsOptedOut"
+            }
         },
         "portalUser": {
             "type": "hasOne",
@@ -493,6 +692,10 @@
     "indexes": {
         "createdAt": {
             "columns": ["createdAt", "deleted"]
+        },
+        "createdAtId": {
+            "unique": true,
+            "columns": ["createdAt", "id"]
         },
         "firstName": {
             "columns": ["firstName", "deleted"]

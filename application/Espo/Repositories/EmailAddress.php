@@ -31,26 +31,20 @@ namespace Espo\Repositories;
 
 use Espo\ORM\Entity;
 
-class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
+use Espo\Entities\EmailAddress as EmailAddressEntity;
+
+use Espo\Core\Di;
+
+class EmailAddress extends \Espo\Core\Repositories\Database implements
+    Di\ApplicationStateAware,
+    Di\AclManagerAware
 {
+    use Di\ApplicationStateSetter;
+    use Di\AclManagerSetter;
+
     protected $processFieldsAfterSaveDisabled = true;
 
-    protected $processFieldsBeforeSaveDisabled = true;
-
     protected $processFieldsAfterRemoveDisabled = true;
-
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('user');
-        $this->addDependency('acl');
-        $this->addDependency('aclManager');
-    }
-
-    protected function getAcl()
-    {
-        return $this->getInjection('acl');
-    }
 
     public function getIdListFormAddressList(array $addressList = [])
     {
@@ -94,210 +88,227 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
         return $ids;
     }
 
-    public function getEmailAddressData(Entity $entity)
+    public function getEmailAddressData(Entity $entity) : array
     {
-        $data = [];
+        $dataList = [];
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            SELECT email_address.name, email_address.lower, email_address.invalid, email_address.opt_out AS optOut, entity_email_address.primary
-            FROM entity_email_address
-            JOIN email_address ON email_address.id = entity_email_address.email_address_id AND email_address.deleted = 0
-            WHERE
-                entity_email_address.entity_id = ".$pdo->quote($entity->id)." AND
-                entity_email_address.entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                entity_email_address.deleted = 0
-            ORDER BY entity_email_address.primary DESC
-        ";
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        if ($rows = $sth->fetchAll()) {
-            foreach ($rows as $row) {
-                $obj = new \StdClass();
-                $obj->emailAddress = $row['name'];
-                $obj->lower = $row['lower'];
-                $obj->primary = ($row['primary'] == '1') ? true : false;
-                $obj->optOut = ($row['optOut'] == '1') ? true : false;
-                $obj->invalid = ($row['invalid'] == '1') ? true : false;
-                $data[] = $obj;
-            }
+        $emailAddressList = $this
+            ->select(['name', 'lower', 'invalid', 'optOut', ['ee.primary', 'primary']])
+            ->join(
+                'EntityEmailAddress',
+                'ee',
+                [
+                    'ee.emailAddressId:' => 'id',
+                ]
+            )
+            ->where([
+                'ee.entityId' => $entity->id,
+                'ee.entityType' => $entity->getEntityType(),
+                'ee.deleted' => false,
+            ])
+            ->order('ee.primary', true)
+            ->find();
+
+        foreach ($emailAddressList as $emailAddress) {
+            $item = (object) [
+                'emailAddress' => $emailAddress->get('name'),
+                'lower' => $emailAddress->get('lower'),
+                'primary' => $emailAddress->get('primary'),
+                'optOut' => $emailAddress->get('optOut'),
+                'invalid' => $emailAddress->get('invalid'),
+            ];
+            $dataList[] = $item;
         }
 
-        return $data;
+        return $dataList;
     }
 
-    public function getByAddress($address)
+    public function getByAddress(string $address) : ?EmailAddressEntity
     {
-        return $this->where(array('lower' => strtolower($address)))->findOne();
+        return $this->where(['lower' => strtolower($address)])->findOne();
     }
 
-    public function getEntityListByAddressId($emailAddressId, $exceptionEntity = null, $entityType = null, $onlyName = false)
-    {
+    public function getEntityListByAddressId(
+        string $emailAddressId, ?Entity $exceptionEntity = null, ?string $entityType = null, bool $onlyName = false
+    ) : array {
         $entityList = [];
 
-        $pdo = $this->getEntityManager()->getPDO();
-
-        $sql = "
-            SELECT entity_email_address.entity_type AS 'entityType', entity_email_address.entity_id AS 'entityId'
-            FROM entity_email_address
-            WHERE
-                entity_email_address.email_address_id = ".$pdo->quote($emailAddressId)." AND
-                entity_email_address.deleted = 0
-        ";
+        $where = [
+            'emailAddressId' => $emailAddressId,
+        ];
 
         if ($exceptionEntity) {
-            $sql .= "
-                AND (
-                    entity_email_address.entity_type <> " .$pdo->quote($exceptionEntity->getEntityType()) . "
-                    OR
-                    entity_email_address.entity_id <> " .$pdo->quote($exceptionEntity->id) . "
-                )
-            ";
+            $where[] = [
+                'OR' => [
+                    'entityType!=' => $exceptionEntity->getEntityType(),
+                    'entityId!=' => $exceptionEntity->id,
+                ]
+            ];
         }
 
         if ($entityType) {
-            $sql .= "
-                AND entity_email_address.entity_type = " . $pdo->quote($entityType) . "
-            ";
+            $where[] = [
+                'entityType' => $entityType,
+            ];
         }
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
+        $itemList = $this->getEntityManager()->getRepository('EntityEmailAddress')
+            ->sth()
+            ->select(['entityType', 'entityId'])
+            ->where($where)
+            ->find();
 
-        while ($row = $sth->fetch()) {
-            if (empty($row['entityType']) || empty($row['entityId'])) continue;
-            if (!$this->getEntityManager()->hasRepository($row['entityType'])) continue;
+        foreach ($itemList as $item) {
+            $itemEntityType = $item->get('entityType');
+            $itemEntityId = $item->get('entityId');
+
+            if (!$itemEntityType || !$itemEntityId) continue;
+
+            if (!$this->getEntityManager()->hasRepository($itemEntityType)) continue;
 
             if ($onlyName) {
                 $select = ['id', 'name'];
-                if ($row['entityType'] === 'User') {
+                if ($itemEntityType === 'User') {
                     $select[] = 'isActive';
                 }
-                $entity = $this->getEntityManager()->getRepository($row['entityType'])
+                $entity = $this->getEntityManager()->getRepository($itemEntityType)
                     ->select($select)
-                    ->where(['id' => $row['entityId']])
+                    ->where(['id' => $itemEntityId])
                     ->findOne();
             } else {
-                $entity = $this->getEntityManager()->getEntity($row['entityType'], $row['entityId']);
+                $entity = $this->getEntityManager()->getEntity($itemEntityType, $itemEntityId);
             }
 
-            if ($entity) {
-                if ($entity->getEntityType() === 'User') {
-                    if (!$entity->get('isActive')) continue;
-                }
-                $entityList[] = $entity;
+            if (!$entity) {
+                continue;
             }
+
+            if ($entity->getEntityType() === 'User' && !$entity->get('isActive')) {
+                continue;
+            }
+
+            $entityList[] = $entity;
         }
 
         return $entityList;
     }
 
-    public function getEntityByAddressId($emailAddressId, $entityType = null, $onlyName = false)
+    public function getEntityByAddressId(string $emailAddressId, ?string $entityType = null, bool $onlyName = false) : ?Entity
     {
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            SELECT entity_email_address.entity_type AS 'entityType', entity_email_address.entity_id AS 'entityId'
-            FROM entity_email_address
-            WHERE
-                entity_email_address.email_address_id = ".$pdo->quote($emailAddressId)." AND
-                entity_email_address.deleted = 0
-        ";
+        $where = [
+            'emailAddressId' => $emailAddressId,
+        ];
 
         if ($entityType) {
-            $sql .= "
-                AND entity_email_address.entity_type = " . $pdo->quote($entityType) . "
-            ";
+            $where[] = ['entityType' => $entityType];
         }
 
-        $sql .= "
-            ORDER BY entity_email_address.primary DESC, FIELD(entity_email_address.entity_type, 'User', 'Contact', 'Lead', 'Account')
-        ";
+        $itemList = $this->getEntityManager()->getRepository('EntityEmailAddress')
+            ->sth()
+            ->select(['entityType', 'entityId'])
+            ->where($where)
+            ->limit(0, 20)
+            ->order([
+                ['primary', 'DESC'],
+                ['LIST:entityType:User,Contact,Lead,Account'],
+            ])
+            ->find();
 
-        $sql .= " LIMIT 0, 20";
+        foreach ($itemList as $item) {
+            $itemEntityType = $item->get('entityType');
+            $itemEntityId = $item->get('entityId');
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
+            if (!$itemEntityType || !$itemEntityId) continue;
 
-        while ($row = $sth->fetch()) {
-            if (empty($row['entityType']) || empty($row['entityId'])) continue;
-            if (!$this->getEntityManager()->hasRepository($row['entityType'])) continue;
+            if (!$this->getEntityManager()->hasRepository($itemEntityType)) continue;
 
             if ($onlyName) {
                 $select = ['id', 'name'];
-                if ($row['entityType'] === 'User') {
+                if ($itemEntityType === 'User') {
                     $select[] = 'isActive';
                 }
-                $entity = $this->getEntityManager()->getRepository($row['entityType'])
+                $entity = $this->getEntityManager()->getRepository($itemEntityType)
                     ->select($select)
-                    ->where(['id' => $row['entityId']])
+                    ->where(['id' => $itemEntityId])
                     ->findOne();
             } else {
-                $entity = $this->getEntityManager()->getEntity($row['entityType'], $row['entityId']);
+                $entity = $this->getEntityManager()->getEntity($itemEntityType, $itemEntityId);
             }
+
             if ($entity) {
                 if ($entity->getEntityType() === 'User') {
                     if (!$entity->get('isActive')) continue;
                 }
+
                 return $entity;
             }
         }
+
+        return null;
     }
 
-    public function getEntityByAddress($address, $entityType = null, $order = ['User', 'Contact', 'Lead', 'Account'])
-    {
-        $pdo = $this->getEntityManager()->getPDO();
-        $a = [];
-        foreach ($order as $item) {
-            $a[] = $pdo->quote($item);
-        }
+    public function getEntityByAddress(
+        string $address, ?string $entityType = null, array $order = ['User', 'Contact', 'Lead', 'Account']
+    ) : ?Entity {
+        $selectBuilder = $this->getEntityManager()->getRepository('EntityEmailAddress')->select();
 
-        $sql = "
-            SELECT entity_email_address.entity_type AS 'entityType', entity_email_address.entity_id AS 'entityId'
-            FROM entity_email_address
-            JOIN email_address ON email_address.id = entity_email_address.email_address_id AND email_address.deleted = 0
-            WHERE
-                email_address.lower = ".$pdo->quote(strtolower($address))." AND
-                entity_email_address.deleted = 0
-        ";
+        $selectBuilder
+            ->select(['entityType', 'entityId'])
+            ->sth()
+            ->join('EmailAddress', 'ea', ['ea.id:' => 'emailAddressId', 'ea.deleted' => 0])
+            ->where('ea.lower=', strtolower($address))
+            ->order([
+                ['LIST:entityType:' . implode(',', $order)],
+                ['primary', 'DESC'],
+            ]);
 
         if ($entityType) {
-            $sql .= "
-                AND entity_email_address.entity_type = " . $pdo->quote($entityType) . "
-            ";
+            $selectBuilder->where('entityType=', $entityType);
         }
 
-        $sql .= "
-            ORDER BY FIELD(entity_email_address.entity_type, ".join(',', array_reverse($a)).") DESC, entity_email_address.primary DESC
-        ";
+        foreach ($selectBuilder->find() as $item) {
+            $itemEntityType = $item->get('entityType');
+            $itemEntityId = $item->get('entityId');
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        while ($row = $sth->fetch()) {
-            if (!empty($row['entityType']) && !empty($row['entityId'])) {
-                $entity = $this->getEntityManager()->getEntity($row['entityType'], $row['entityId']);
-                if ($entity) {
-                    return $entity;
+            if (!$itemEntityType || !$itemEntityId) continue;
+
+            if (!$this->getEntityManager()->hasRepository($itemEntityType)) continue;
+
+            $entity = $this->getEntityManager()->getEntity($itemEntityType, $itemEntityId);
+
+            if ($entity) {
+                if ($entity->getEntityType() === 'User') {
+                    if (!$entity->get('isActive')) continue;
                 }
+
+                return $entity;
             }
         }
+
+        return null;
     }
 
     public function storeEntityEmailAddressData(Entity $entity)
     {
-        $pdo = $this->getEntityManager()->getPDO();
-
         $emailAddressValue = $entity->get('emailAddress');
+
         if (is_string($emailAddressValue)) {
             $emailAddressValue = trim($emailAddressValue);
         }
 
         $emailAddressData = null;
+
         if ($entity->has('emailAddressData')) {
             $emailAddressData = $entity->get('emailAddressData');
         }
 
-        if (is_null($emailAddressData)) return;
-        if (!is_array($emailAddressData)) return;
+        if (is_null($emailAddressData)) {
+            return;
+        }
+
+        if (!is_array($emailAddressData)) {
+            return;
+        }
 
         $keyList = [];
         $keyPreviousList = [];
@@ -404,23 +415,29 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
 
         foreach ($toRemoveList as $address) {
             $emailAddress = $this->getByAddress($address);
-            if ($emailAddress) {
-                $query = "
-                    DELETE FROM entity_email_address
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        email_address_id = ".$pdo->quote($emailAddress->id)."
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+            if (!$emailAddress) {
+                continue;
             }
+
+            $delete = $this->getEntityManager()->getQueryBuilder()
+                ->delete()
+                ->from('EntityEmailAddress')
+                ->where([
+                    'entityId' => $entity->id,
+                    'entityType' => $entity->getEntityType(),
+                    'emailAddressId' => $emailAddress->id,
+                ])
+                ->build();
+
+            $this->getEntityManager()->getQueryExecutor()->execute($delete);
         }
 
         foreach ($toUpdateList as $address) {
             $emailAddress = $this->getByAddress($address);
+
             if ($emailAddress) {
                 $skipSave = $this->checkChangeIsForbidden($emailAddress, $entity);
+
                 if (!$skipSave) {
                     $emailAddress->set([
                         'optOut' => $hash->{$address}['optOut'],
@@ -428,7 +445,8 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
                         'name' => $hash->{$address}['emailAddress']
                     ]);
                     $this->save($emailAddress);
-                } else {
+                }
+                else {
                     $revertData[$address] = [
                         'optOut' => $emailAddress->get('optOut'),
                         'invalid' => $emailAddress->get('invalid'),
@@ -439,6 +457,7 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
 
         foreach ($toCreateList as $address) {
             $emailAddress = $this->getByAddress($address);
+
             if (!$emailAddress) {
                 $emailAddress = $this->get();
 
@@ -448,8 +467,10 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
                     'invalid' => $hash->{$address}['invalid'],
                 ]);
                 $this->save($emailAddress);
-            } else {
+            }
+            else {
                 $skipSave = $this->checkChangeIsForbidden($emailAddress, $entity);
+
                 if (!$skipSave) {
                     if (
                         $emailAddress->get('optOut') != $hash->{$address}['optOut'] ||
@@ -471,48 +492,53 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
                 }
             }
 
-            $query = "
-                INSERT entity_email_address
-                    (entity_id, entity_type, email_address_id, `primary`)
-                    VALUES
-                    (
-                        ".$pdo->quote($entity->id).",
-                        ".$pdo->quote($entity->getEntityType()).",
-                        ".$pdo->quote($emailAddress->id).",
-                        ".$pdo->quote((int)($address === $primary))."
-                    )
-                ON DUPLICATE KEY UPDATE deleted = 0, `primary` = ".$pdo->quote((int)($address === $primary))."
-            ";
+            $entityEmailAddress = $this->getEntityManager()->getEntity('EntityEmailAddress');
 
-            $this->getEntityManager()->runQuery($query, true);
+            $entityEmailAddress->set([
+                'entityId' => $entity->id,
+                'entityType' => $entity->getEntityType(),
+                'emailAddressId' => $emailAddress->id,
+                'primary' => $address === $primary,
+                'deleted' => false,
+            ]);
+
+            $this->getEntityManager()->getMapper('RDB')->insertOnDuplicateUpdate($entityEmailAddress, [
+                'primary',
+                'deleted',
+            ]);
         }
 
         if ($primary) {
             $emailAddress = $this->getByAddress($primary);
-            if ($emailAddress) {
-                $query = "
-                    UPDATE entity_email_address
-                    SET `primary` = 0
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        `primary` = 1 AND
-                        deleted = 0
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
 
-                $query = "
-                    UPDATE entity_email_address
-                    SET `primary` = 1
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        email_address_id = ".$pdo->quote($emailAddress->id)." AND
-                        deleted = 0
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+            if ($emailAddress) {
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityEmailAddress')
+                    ->set(['primary' => false])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'primary' => true,
+                        'deleted' => false,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
+
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityEmailAddress')
+                    ->set(['primary' => true])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'emailAddressId' => $emailAddress->id,
+                        'deleted' => false,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
             }
         }
 
@@ -523,27 +549,32 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
                     $row->invalid = $revertData[$row->emailAddress]['invalid'];
                 }
             }
+
             $entity->set('emailAddressData', $emailAddressData);
         }
     }
 
     protected function storeEntityEmailAddressPrimary(Entity $entity)
     {
-        if (!$entity->has('emailAddress')) return;
-
-        $pdo = $this->getEntityManager()->getPDO();
+        if (!$entity->has('emailAddress')) {
+            return;
+        }
 
         $emailAddressValue = $entity->get('emailAddress');
+
         if (is_string($emailAddressValue)) {
             $emailAddressValue = trim($emailAddressValue);
         }
 
         $entityRepository = $this->getEntityManager()->getRepository($entity->getEntityType());
+
         if (!empty($emailAddressValue)) {
             if ($emailAddressValue != $entity->getFetched('emailAddress')) {
 
                 $emailAddressNew = $this->where(['lower' => strtolower($emailAddressValue)])->findOne();
+
                 $isNewEmailAddress = false;
+
                 if (!$emailAddressNew) {
                     $emailAddressNew = $this->get();
                     $emailAddressNew->set('name', $emailAddressValue);
@@ -555,28 +586,33 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
                 }
 
                 $emailAddressValueOld = $entity->getFetched('emailAddress');
+
                 if (!empty($emailAddressValueOld)) {
                     $emailAddressOld = $this->getByAddress($emailAddressValueOld);
                     if ($emailAddressOld) {
                         $entityRepository->unrelate($entity, 'emailAddresses', $emailAddressOld);
                     }
                 }
+
                 $entityRepository->relate($entity, 'emailAddresses', $emailAddressNew);
 
                 if ($entity->has('emailAddressIsOptedOut')) {
                     $this->markAddressOptedOut($emailAddressValue, !!$entity->get('emailAddressIsOptedOut'));
                 }
 
-                $query = "
-                    UPDATE entity_email_address
-                    SET `primary` = 1
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        email_address_id = ".$pdo->quote($emailAddressNew->id)."
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityEmailAddress')
+                    ->set(['primary' => true])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'emailAddressId' => $emailAddressNew->id,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
+
             } else {
                 if (
                     $entity->has('emailAddressIsOptedOut')
@@ -596,14 +632,15 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
             }
         } else {
             $emailAddressValueOld = $entity->getFetched('emailAddress');
+
             if (!empty($emailAddressValueOld)) {
                 $emailAddressOld = $this->getByAddress($emailAddressValueOld);
+
                 if ($emailAddressOld) {
                     $entityRepository->unrelate($entity, 'emailAddresses', $emailAddressOld);
                 }
             }
         }
-
     }
 
     public function storeEntityEmailAddress(Entity $entity)
@@ -620,16 +657,28 @@ class EmailAddress extends \Espo\Core\ORM\Repositories\RDB
         }
     }
 
+    /**
+     * @todo Move it to another place. ACL should not be in a repository.
+     */
     protected function checkChangeIsForbidden($entity, $excludeEntity)
     {
-        return !$this->getInjection('aclManager')->getImplementation('EmailAddress')->checkEditInEntity($this->getInjection('user'), $entity, $excludeEntity);
+        if (!$this->applicationState->hasUser()) {
+            return true;
+        }
+
+        $user = $this->applicationState->getUser();
+
+        return !$this->aclManager->getImplementation('EmailAddress')
+            ->checkEditInEntity($user, $entity, $excludeEntity);
     }
 
-    public function markAddressOptedOut($address, $isOptedOut = true)
+    public function markAddressOptedOut(string $address, bool $isOptedOut = true)
     {
         $emailAddress = $this->getByAddress($address);
+
         if ($emailAddress) {
             $emailAddress->set('optOut', !!$isOptedOut);
+
             $this->save($emailAddress);
         }
     }

@@ -126,7 +126,6 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
                     }
                 ];
 
-
                 if (this.getConfig().get('forcedDashboardLayout')) {
                     this.dashboardLayout = this.getConfig().get('forcedDashboardLayout') || [];
                 } else if (this.getUser().get('portalId')) {
@@ -148,7 +147,7 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
 
             var tabLayout = dashboardLayout[this.currentTab].layout || [];
 
-            tabLayout = GridStackUI.Utils.sort(tabLayout);
+            tabLayout = GridStack.Utils.sort(tabLayout);
 
             this.currentTabLayout = tabLayout;
         },
@@ -180,6 +179,8 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
 
             this.dashletIdList = [];
 
+            this.screenWidthXs = this.getThemeManager().getParam('screenWidthXs');
+
             if (this.getUser().get('portalId')) {
                 this.layoutReadOnly = true;
                 this.dashletsReadOnly = true;
@@ -189,16 +190,13 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
                     this.layoutReadOnly = true;
                 }
                 if (~forbiddenPreferencesFieldList.indexOf('dashletsOptions')) {
-                    this.dashletsReadOnly = true;
+                    this.dashletthis.gridsReadOnly = true;
                 }
             }
 
             this.once('remove', function () {
-                if (this.$gridstack) {
-                    var gridStack = this.$gridstack.data('gridstack');
-                    if (gridStack) {
-                        gridStack.destroy();
-                    }
+                if (this.grid) {
+                    this.grid.destroy();
                 }
 
                 if (this.fallbackModeTimeout) {
@@ -213,7 +211,7 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         afterRender: function () {
             this.$dashboard = this.$el.find('> .dashlets');
 
-            if (window.innerWidth >= this.getThemeManager().getParam('screenWidthXs')) {
+            if (window.innerWidth >= this.screenWidthXs) {
                 this.initGridstack();
             } else {
                 this.initFallbackMode();
@@ -224,8 +222,12 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         },
 
         onResize: function () {
-            if (this.isFallbackMode() && window.innerWidth >= this.getThemeManager().getParam('screenWidthXs')) {
+            if (this.isFallbackMode() && window.innerWidth >= this.screenWidthXs) {
                 this.initGridstack();
+            }
+            else
+            if (!this.isFallbackMode() && window.innerWidth < this.screenWidthXs) {
+                this.initFallbackMode();
             }
         },
 
@@ -233,26 +235,85 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
             return this.$dashboard.hasClass('fallback');
         },
 
+        preserveDashletViews: function () {
+            this.preservedDashletViews = {};
+            this.preservedDashletElements = {};
+
+            this.currentTabLayout.forEach(function (o) {
+                var key = 'dashlet-' + o.id;
+                var view = this.getView(key);
+
+                this.unchainView(key);
+
+                this.preservedDashletViews[o.id] = view;
+
+                var $el = view.$el.children(0);
+
+                this.preservedDashletElements[o.id] = $el;
+
+                $el.detach();
+            }, this);
+        },
+
+        addPreservedDashlet: function (id) {
+            var view = this.preservedDashletViews[id];
+            var $el = this.preservedDashletElements[id];
+
+            this.$el.find('.dashlet-container[data-id="'+id+'"]').append($el);
+
+            this.setView('dashlet-' + id, view);
+        },
+
+        clearPreservedDashlets: function () {
+            this.preservedDashletViews = null;
+            this.preservedDashletElements = null;
+        },
+
+        hasPreservedDashlets: function () {
+            return !!this.preservedDashletViews;
+        },
+
         initFallbackMode: function () {
+            if (this.grid) {
+                this.grid.destroy(false);
+                this.grid = null;
+
+                this.preserveDashletViews();
+            }
+
             this.$dashboard.empty();
 
             var $dashboard = this.$dashboard;
+
             $dashboard.addClass('fallback');
 
             this.currentTabLayout.forEach(function (o) {
                 var $item = this.prepareFallbackItem(o);
+
                 $dashboard.append($item);
             }, this);
 
             this.currentTabLayout.forEach(function (o) {
-                if (!o.id || !o.name) return;
+                if (!o.id || !o.name) {
+                    return;
+                }
 
                 if (!this.getMetadata().get(['dashlets', o.name])) {
                     console.error("Dashlet " + o.name + " doesn't exist or not available.");
+
                     return;
                 }
+
+                if (this.hasPreservedDashlets()) {
+                    this.addPreservedDashlet(o.id);
+
+                    return;
+                }
+
                 this.createDashletView(o.id, o.name);
             }, this);
+
+            this.clearPreservedDashlets();
 
             if (this.fallbackModeTimeout) {
                 clearTimeout(this.fallbackModeTimeout);
@@ -266,17 +327,22 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         fallbackControlHeights: function () {
             this.currentTabLayout.forEach(function (o) {
                 var $container = this.$dashboard.find('.dashlet-container[data-id="'+o.id+'"]');
+
                 var headerHeight = $container.find('.panel-heading').outerHeight();
+
                 var $body = $container.find('.dashlet-body');
 
                 var bodyEl = $body.get(0);
-                if (!bodyEl) return;
+
+                if (!bodyEl) {
+                    return;
+                }
 
                 if (bodyEl.scrollHeight > bodyEl.offsetHeight) {
                     var height = bodyEl.scrollHeight + headerHeight;
+
                     $container.css('height', height + 'px');
                 }
-
             }, this);
 
             this.fallbackModeTimeout = setTimeout(function () {
@@ -285,6 +351,10 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         },
 
         initGridstack: function () {
+            if (this.isFallbackMode()) {
+                this.preserveDashletViews();
+            }
+
             this.$dashboard.empty();
 
             var $gridstack = this.$gridstack = this.$dashboard;
@@ -304,56 +374,86 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
                 draggable = {
                     handle: '.dashlet-container .panel-heading',
                 };
+
                 resizable = {
                     handles: 'se',
-                    helper: false
+                    helper: false,
                 };
+
                 disableDrag = true;
                 disableResize = true;
             }
 
-            $gridstack.gridstack({
-                minWidth: 4,
-                cellHeight: this.getThemeManager().getParam('dashboardCellHeight'),
-                verticalMargin: this.getThemeManager().getParam('dashboardCellMargin'),
-                width: 4,
-                minWidth: this.getThemeManager().getParam('screenWidthXs'),
-                handle: '.dashlet-container .panel-heading',
-                disableDrag: disableDrag,
-                disableResize: disableResize
-            });
+            var grid = this.grid = GridStack.init(
+                {
+                    cellHeight: this.getThemeManager().getParam('dashboardCellHeight'),
+                    verticalMargin: this.getThemeManager().getParam('dashboardCellMargin'),
+                    column: 4,
+                    handle: '.dashlet-container .panel-heading',
+                    disableDrag: disableDrag,
+                    disableResize: disableResize,
+                    disableOneColumnMode: true,
+                },
+                $gridstack.get(0)
+            );
 
-            var grid = $gridstack.data('gridstack');
             grid.removeAll();
 
             this.currentTabLayout.forEach(function (o) {
                 var $item = this.prepareGridstackItem(o.id, o.name);
+
                 if (!this.getMetadata().get(['dashlets', o.name])) {
                     return;
                 }
-                grid.addWidget($item, o.x, o.y, o.width, o.height);
+
+                grid.addWidget(
+                    $item.get(0),
+                    {
+                        x: o.x,
+                        y: o.y,
+                        width: o.width,
+                        height: o.height,
+                    }
+                );
             }, this);
 
             $gridstack.find(' .grid-stack-item').css('position', 'absolute');
 
             this.currentTabLayout.forEach(function (o) {
-                if (!o.id || !o.name) return;
-                if (!this.getMetadata().get(['dashlets', o.name])) {
-                    console.error("Dashlet " + o.name + " doesn't exist or not available.");
+                if (!o.id || !o.name) {
                     return;
                 }
+
+                if (!this.getMetadata().get(['dashlets', o.name])) {
+                    console.error("Dashlet " + o.name + " doesn't exist or not available.");
+
+                    return;
+                }
+
+                if (this.hasPreservedDashlets()) {
+                    this.addPreservedDashlet(o.id);
+
+                    return;
+                }
+
                 this.createDashletView(o.id, o.name);
             }, this);
 
-            $gridstack.on('change', function (e, itemList) {
+            this.clearPreservedDashlets();
+
+            this.grid.on('change', function (e, itemList) {
                 this.fetchLayout();
                 this.saveLayout();
             }.bind(this));
 
-            $gridstack.on('resizestop', function (e, ui) {
+            this.grid.on('resizestop', function (e, ui) {
                 var id = $(e.target).data('id');
                 var view = this.getView('dashlet-' + id);
-                if (!view) return;
+
+                if (!view) {
+                    return;
+                }
+
                 view.trigger('resize');
             }.bind(this));
         },
@@ -362,13 +462,14 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
             var layout = _.map(this.$gridstack.find('.grid-stack-item'), function (el) {
                 var $el = $(el);
                 var node = $el.data('_gridstack_node') || {};
+
                 return {
                     id: $el.data('id'),
                     name: $el.data('name'),
                     x: node.x,
                     y: node.y,
                     width: node.width,
-                    height: node.height
+                    height: node.height,
                 };
             }.bind(this));
 
@@ -378,10 +479,13 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         prepareGridstackItem: function (id, name) {
             var $item = $('<div></div>');
             var $container = $('<div class="grid-stack-item-content dashlet-container"></div>');
+
             $container.attr('data-id', id);
             $container.attr('data-name', name);
+
             $item.attr('data-id', id);
             $item.attr('data-name', name);
+
             $item.append($container);
 
             return $item;
@@ -408,45 +512,58 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
         },
 
         saveLayout: function () {
-            if (this.layoutReadOnly) return;
+            if (this.layoutReadOnly) {
+                return;
+            }
 
             this.getPreferences().save({
-                dashboardLayout: this.dashboardLayout
+                dashboardLayout: this.dashboardLayout,
             }, {patch: true});
+
             this.getPreferences().trigger('update');
         },
 
         removeDashlet: function (id) {
             var revertToFallback = false;
+
             if (this.isFallbackMode()) {
                 this.initGridstack();
+
                 revertToFallback = true;
             }
 
-
             var grid = this.$gridstack.data('gridstack');
             var $item = this.$gridstack.find('.grid-stack-item[data-id="'+id+'"]');
-            grid.removeWidget($item, true);
+
+            this.grid.removeWidget($item.get(0), true);
 
             var layout = this.dashboardLayout[this.currentTab].layout;
+
             layout.forEach(function (o, i) {
                 if (o.id == id) {
                     layout.splice(i, 1);
+
                     return;
                 }
             });
 
             var o = {};
+
             o.dashletsOptions = this.getPreferences().get('dashletsOptions') || {};
+
             delete o.dashletsOptions[id];
 
             o.dashboardLayout = this.dashboardLayout;
 
-            if (this.layoutReadOnly) return;
+            if (this.layoutReadOnly) {
+                return;
+            }
+
             this.getPreferences().save(o, {patch: true});
             this.getPreferences().trigger('update');
 
             var index = this.dashletIdList.indexOf(id);
+
             if (~index) {
                 this.dashletIdList.splice(index, index);
             }
@@ -462,6 +579,7 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
 
         addDashlet: function (name) {
             var revertToFallback = false;
+
             if (this.isFallbackMode()) {
                 this.initGridstack();
                 revertToFallback = true;
@@ -470,8 +588,16 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
             var id = 'd' + (Math.floor(Math.random() * 1000001)).toString();
 
             var $item = this.prepareGridstackItem(id, name);
-            var grid = this.$gridstack.data('gridstack');
-            grid.addWidget($item, 0, 0, 2, 2);
+
+            this.grid.addWidget(
+                $item.get(0),
+                {
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                }
+            );
 
             this.createDashletView(id, name, name, function (view) {
                 this.fetchLayout();
@@ -496,6 +622,7 @@ define('views/dashboard', ['view', 'lib!gridstack'], function (Dep, Gridstack) {
                 id: id,
                 name: name
             }
+
             if (label) {
                 o.label = label;
             }

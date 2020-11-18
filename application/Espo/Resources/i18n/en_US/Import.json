@@ -1,5 +1,6 @@
 {
     "labels": {
+        "New import with same params": "New import with same params",
         "Revert Import": "Revert Import",
         "Return to Import": "Return to Import",
         "Run Import": "Run Import",
@@ -55,6 +56,7 @@
         "Remove Import Log": "Remove Import Log",
         "New Import": "New Import",
         "Import Results": "Import Results",
+        "Run Manually": "Run Manually",
         "Silent Mode": "Silent Mode"
     },
     "messages": {
@@ -65,7 +67,7 @@
         "removeDuplicates": "This will permanently remove all imported records that were recognized as duplicates.",
         "confirmRevert": "This will remove all imported records permanently. Are you sure?",
         "confirmRemoveDuplicates": "This will permanently remove all imported records that were recognized as duplicates. Are you sure?",
-        "confirmRemoveImportLog" : "This will remove the import log. All imported records will be kept. You won't be able to revert import results. Are you sure you?",
+        "confirmRemoveImportLog" : "This will remove the import log. All imported records will be kept. You won't be able to revert import results. Are you sure?",
         "removeImportLog": "This will remove the import log. All imported records will be kept. Use it if you are sure that import is fine."
     },
     "fields": {
@@ -79,6 +81,8 @@
     "options": {
         "status": {
             "Failed": "Failed",
+            "Standby": "Standby",
+            "Pending": "Pending",
             "In Process": "In Process",
             "Complete": "Complete"
         },
@@ -89,5 +93,13 @@
             "l f m": "Last First Middle",
             "l, f": "Last, First"
         }
+    },
+    "strings": {
+        "commandToRun": "Command to run (from CLI)",
+        "saveAsDefault": "Save as default"
+    },
+    "tooltips": {
+        "manualMode": "If checked, you will need to run import manually from CLI. Command will be shown after setting up the import.",
+        "silentMode": "A majority of after-save scripts will be skipped, stream notes won't be created. Import will run faster."
     }
 }

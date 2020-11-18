@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('crm:views/case/record/detail', 'views/record/detail', function (Dep) {
+define('crm:views/case/record/detail', 'views/record/detail', function (Dep) {
 
     return Dep.extend({
 
@@ -34,15 +34,28 @@ Espo.define('crm:views/case/record/detail', 'views/record/detail', function (Dep
 
         setupActionItems: function () {
             Dep.prototype.setupActionItems.call(this);
-            if (this.getAcl().checkModel(this.model, 'edit')) {
-                if (['Closed', 'Rejected', 'Duplicate'].indexOf(this.model.get('status')) == -1) {
+
+            if (
+                this.getAcl().checkModel(this.model, 'edit') &&
+                !~['Closed', 'Rejected', 'Duplicate'].indexOf(this.model.get('status')) &&
+                this.getAcl().checkField(this.entityType, 'status', 'edit')
+            ) {
+
+                var statusList = this.getMetadata().get(
+                    ['entityDefs', 'Case', 'fields', 'status', 'options']
+                ) || [];
+
+                if (~statusList.indexOf('Closed')) {
                     this.dropdownItemList.push({
                         'label': 'Close',
-                        'name': 'close'
+                        'name': 'close',
                     });
+                }
+
+                if (~statusList.indexOf('Rejected')) {
                     this.dropdownItemList.push({
                         'label': 'Reject',
-                        'name': 'reject'
+                        'name': 'reject',
                     });
                 }
             }

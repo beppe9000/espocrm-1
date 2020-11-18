@@ -28,133 +28,142 @@
  ************************************************************************/
 
 namespace Espo\Core\Utils\File;
-use \Espo\Core\Utils\Util;
+
+use Espo\Core\{
+    Exceptions\Error,
+    Utils\Util,
+    Utils\File\Manager as FileManager,
+    Utils\Config,
+    Utils\Metadata,
+    Utils\DataCache,
+
+};
+
+use ReflectionClass;
 
 class ClassParser
 {
     private $fileManager;
-
     private $config;
-
     private $metadata;
+    private $dataCache;
 
-    protected $cacheFile = null;
-
-    protected $allowedMethods = array(
-        'run',
-    );
-
-    public function __construct(\Espo\Core\Utils\File\Manager $fileManager, \Espo\Core\Utils\Config $config, \Espo\Core\Utils\Metadata $metadata)
+    public function __construct(FileManager $fileManager, Config $config, Metadata $metadata, DataCache $dataCache)
     {
         $this->fileManager = $fileManager;
         $this->config = $config;
         $this->metadata = $metadata;
-    }
-
-    protected function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    protected function getConfig()
-    {
-        return $this->config;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
-    }
-
-    public function setAllowedMethods($methods)
-    {
-        $this->allowedMethods = $methods;
+        $this->dataCache = $dataCache;
     }
 
     /**
-     * Return path data of classes
+     * Return paths to class files.
      *
-     * @param  string  $cacheFile full path for a cache file, ex. data/cache/application/entryPoints.php
-     * @param  string | array $paths in format array(
+     * @param  string | array $paths in format [
      *    'corePath' => '',
      *    'modulePath' => '',
      *    'customPath' => '',
-     * );
-     * @return array
+     * ]
+     * @param $allowedMethods If specified, classes w/o specified method will be ignored.
      */
-    public function getData($paths, $cacheFile = false)
+    public function getData($paths, ?string $cacheKey = null, ?array $allowedMethods = null, bool $subDirs = false) : array
     {
         $data = null;
 
         if (is_string($paths)) {
-            $paths = array(
+            $paths = [
                 'corePath' => $paths,
-            );
+            ];
         }
 
-        if ($cacheFile && file_exists($cacheFile) && $this->getConfig()->get('useCache')) {
-            $data = $this->getFileManager()->getPhpContents($cacheFile);
-        } else {
-            $data = $this->getClassNameHash($paths['corePath']);
+        if ($cacheKey && $this->dataCache->has($cacheKey) && $this->config->get('useCache')) {
+            $data = $this->dataCache->get($cacheKey);
+
+            if (!is_array($data)) {
+                $GLOBALS['log']->error("ClassParser: Non-array value stored in {$cacheKey}.");
+            }
+        }
+
+        if (!is_array($data)) {
+            $data = $this->getClassNameHash($paths['corePath'], $allowedMethods, $subDirs);
 
             if (isset($paths['modulePath'])) {
-                foreach ($this->getMetadata()->getModuleList() as $moduleName) {
+                foreach ($this->metadata->getModuleList() as $moduleName) {
                     $path = str_replace('{*}', $moduleName, $paths['modulePath']);
 
-                    $data = array_merge($data, $this->getClassNameHash($path));
+                    $data = array_merge($data, $this->getClassNameHash($path, $allowedMethods, $subDirs));
                 }
             }
 
             if (isset($paths['customPath'])) {
-                $data = array_merge($data, $this->getClassNameHash($paths['customPath']));
+                $data = array_merge($data, $this->getClassNameHash($paths['customPath'], $allowedMethods, $subDirs));
             }
 
-            if ($cacheFile && $this->getConfig()->get('useCache')) {
-                $result = $this->getFileManager()->putPhpContents($cacheFile, $data);
-                if ($result == false) {
-                    throw new \Espo\Core\Exceptions\Error();
-                }
+            if ($cacheKey && $this->config->get('useCache')) {
+                $this->dataCache->store($cacheKey, $data);
             }
         }
 
         return $data;
     }
 
-    protected function getClassNameHash($dirs)
+    protected function getClassNameHash($dirs, ?array $allowedMethods = [], bool $subDirs = false)
     {
         if (is_string($dirs)) {
             $dirs = (array) $dirs;
         }
 
-        $data = array();
+        $data = [];
+
         foreach ($dirs as $dir) {
             if (file_exists($dir)) {
-                $fileList = $this->getFileManager()->getFileList($dir, false, '\.php$', true);
+                $fileList = $this->fileManager->getFileList($dir, $subDirs, '\.php$', true);
 
-                foreach ($fileList as $file) {
-                    $filePath = Util::concatPath($dir, $file);
-                    $className = Util::getClassName($filePath);
-                    $fileName = $this->getFileManager()->getFileName($filePath);
-
-                    $scopeName = ucfirst($fileName);
-                    $normalizedScopeName = Util::normilizeScopeName($scopeName);
-
-                    if (empty($this->allowedMethods)) {
-                        $data[$normalizedScopeName] = $className;
-                        continue;
-                    }
-
-                    foreach ($this->allowedMethods as $methodName) {
-                        if (method_exists($className, $methodName)) {
-                            $data[$normalizedScopeName] = $className;
-                        }
-                    }
-
-                }
+                $this->fillHashFromFileList($fileList, $dir, $allowedMethods, $data);
             }
         }
 
         return $data;
     }
 
+    protected function fillHashFromFileList(
+        array $fileList, string $dir, ?array $allowedMethods, array &$data, string $category = ''
+    ) {
+        foreach ($fileList as $key => $file) {
+            if (is_string($key)) {
+                if (is_array($file)) {
+                    $this->fillHashFromFileList($file, $dir . '/'. $key, $allowedMethods, $data, $category . $key . '\\');
+                }
+
+                continue;
+            }
+
+            $filePath = Util::concatPath($dir, $file);
+            $className = Util::getClassName($filePath);
+
+            $fileName = $this->fileManager->getFileName($filePath);
+
+            $class = new ReflectionClass($className);
+
+            if (!$class->isInstantiable()) {
+                continue;
+            }
+
+            $name = Util::normilizeScopeName(ucfirst($fileName));
+
+            $name = $category . $name;
+
+            if (empty($allowedMethods)) {
+                $data[$name] = $className;
+
+                continue;
+            }
+
+            foreach ($allowedMethods as $methodName) {
+                if (method_exists($className, $methodName)) {
+                    $data[$name] = $className;
+                }
+            }
+        }
+    }
 }

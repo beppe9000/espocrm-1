@@ -29,18 +29,22 @@
 
 namespace Espo\Core\Formula\Functions;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\Exceptions\Error;
 
-class ValueType extends Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+class ValueType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (!count($args)) {
+            throw Error("Bad value.");
         }
 
-        $value = $item->value;
+        $value = $args[0]->getData();
 
         if (is_string($value)) {
             $value = str_replace("\\n", "\n", $value);

@@ -31,38 +31,17 @@ namespace Espo\Core\Utils\Autoload;
 
 class Loader
 {
-    private $config;
+    protected $namespaceLoader;
 
-    private $fileManager;
-
-    private $namespaceLoader;
-
-    public function __construct(\Espo\Core\Utils\Config $config, \Espo\Core\Utils\File\Manager $fileManager)
+    public function __construct(NamespaceLoader $namespaceLoader)
     {
-        $this->config = $config;
-        $this->fileManager = $fileManager;
-        $this->namespaceLoader = new NamespaceLoader($config, $fileManager);
-    }
-
-    public function getConfig()
-    {
-        return $this->config;
-    }
-
-    public function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    public function getNamespaceLoader()
-    {
-        return $this->namespaceLoader;
+        $this->namespaceLoader = $namespaceLoader;
     }
 
     public function register(array $autoloadList)
     {
         /* load "psr-4", "psr-0", "classmap" */
-        $this->getNamespaceLoader()->register($autoloadList);
+        $this->namespaceLoader->register($autoloadList);
 
         /* load "autoloadFileList" */
         $this->registerAutoloadFileList($autoloadList);
@@ -75,7 +54,9 @@ class Loader
     {
         $keyName = 'autoloadFileList';
 
-        if (!isset($autoloadList[$keyName])) return;
+        if (!isset($autoloadList[$keyName])) {
+            return;
+        }
 
         foreach ($autoloadList[$keyName] as $filePath) {
             if (file_exists($filePath)) {
@@ -88,7 +69,9 @@ class Loader
     {
         $keyName = 'files';
 
-        if (!isset($autoloadList[$keyName])) return;
+        if (!isset($autoloadList[$keyName])) {
+            return;
+        }
 
         foreach ($autoloadList[$keyName] as $id => $filePath) {
             if (file_exists($filePath)) {

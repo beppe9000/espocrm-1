@@ -93,6 +93,8 @@ define(
         this.url = options.url || this.url;
         this.basePath = options.basePath || '';
 
+        this.ajaxTimeout = options.ajaxTimeout || 0;
+
         this.appParams = {};
 
         this.loader = Espo.loader;
@@ -549,13 +551,13 @@ define(
         setCookieAuth: function (username, token) {
             var date = new Date();
             date.setTime(date.getTime() + (1000 * 24*60*60*1000));
-            document.cookie = 'auth-username='+username+'; expires='+date.toGMTString()+'; path=/';
-            document.cookie = 'auth-token='+token+'; expires='+date.toGMTString()+'; path=/';
+            document.cookie = 'auth-username='+username+'; SameSite=Lax; expires='+date.toGMTString()+'; path=/';
+            document.cookie = 'auth-token='+token+'; SameSite=Lax; expires='+date.toGMTString()+'; path=/';
         },
 
         unsetCookieAuth: function () {
-            document.cookie = 'auth-username' + '=; expires=Thu, 01 Jan 1970 00:00:01 GMT; path=/';
-            document.cookie = 'auth-token' + '=; expires=Thu, 01 Jan 1970 00:00:01 GMT; path=/';
+            document.cookie = 'auth-username' + '=; SameSite=Lax; expires=Thu, 01 Jan 1970 00:00:01 GMT; path=/';
+            document.cookie = 'auth-token' + '=; SameSite=Lax; expires=Thu, 01 Jan 1970 00:00:01 GMT; path=/';
         },
 
         initUserData: function (options, callback) {
@@ -644,7 +646,7 @@ define(
                     }
                 },
                 dataType: 'json',
-                timeout: 60000,
+                timeout: this.ajaxTimeout,
                 contentType: 'application/json'
             });
 
@@ -669,7 +671,7 @@ define(
                             if (self.auth) {
                                 self.logout();
                             } else {
-                                Espo.Ui.error(self.language.translate('Auth error'));
+                                console.error('Error 401: Unauthorized.');
                             }
                         }
                         break;
@@ -679,12 +681,18 @@ define(
                         } else {
                             var msg = self.language.translate('Error') + ' ' + xhr.status;
                             msg += ': ' + self.language.translate('Access denied');
+                            if (statusReason) {
+                                msg += ': ' + statusReason;
+                            }
                             Espo.Ui.error(msg);
                         }
                         break;
                     case 400:
                         var msg = self.language.translate('Error') + ' ' + xhr.status;
                         msg += ': ' + self.language.translate('Bad request');
+                        if (statusReason) {
+                            msg += ': ' + statusReason;
+                        }
                         Espo.Ui.error(msg);
                         break;
                     case 404:

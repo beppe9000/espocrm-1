@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/user/record/edit', ['views/record/edit', 'views/user/record/detail'], function (Dep, Detail) {
+define('views/user/record/edit', ['views/record/edit', 'views/user/record/detail'], function (Dep, Detail) {
 
     return Dep.extend({
 
@@ -45,25 +45,31 @@ Espo.define('views/user/record/edit', ['views/record/edit', 'views/user/record/d
 
             this.hideField('sendAccessInfo');
 
+            this.passwordInfoMessage = this.getPasswordSendingMessage();
+            if (!this.passwordInfoMessage) {
+                this.hideField('passwordInfo');
+            }
+
             var passwordChanged = false;
 
             this.listenToOnce(this.model, 'change:password', function (model) {
                 passwordChanged = true;
-                if (model.get('emailAddress')) {
+                if (this.isPasswordSendable()) {
                     this.showField('sendAccessInfo');
                     this.model.set('sendAccessInfo', true);
                 }
             }, this);
 
-            this.listenTo(this.model, 'change:emailAddress', function (model) {
-                if (passwordChanged) {
-                    if (model.get('emailAddress')) {
-                        this.showField('sendAccessInfo');
-                        this.model.set('sendAccessInfo', true);
-                    } else {
-                        this.hideField('sendAccessInfo');
-                        this.model.set('sendAccessInfo', false);
-                    }
+            this.listenTo(this.model, 'change', function (model) {
+                if (!passwordChanged) return;
+                if (!model.hasChanged('emailAddress') && !model.hasChanged('portalsIds')) return;
+
+                if (this.isPasswordSendable()) {
+                    this.showField('sendAccessInfo');
+                    this.model.set('sendAccessInfo', true);
+                } else {
+                    this.hideField('sendAccessInfo');
+                    this.model.set('sendAccessInfo', false);
                 }
             }, this);
 
@@ -85,6 +91,16 @@ Espo.define('views/user/record/edit', ['views/record/edit', 'views/user/record/d
                 this.model.unset('passwordConfirm', {silent: true});
             }, this);
         },
+
+        isPasswordSendable: function () {
+            if (this.model.isPortal()) {
+                if (!(this.model.get('portalsIds') || []).length) return false;
+            }
+            if (!this.model.get('emailAddress')) return false;
+
+            return true;
+        },
+
 
         setupNonAdminFieldsAccess: function () {
             Detail.prototype.setupNonAdminFieldsAccess.call(this);
@@ -168,8 +184,9 @@ Espo.define('views/user/record/edit', ['views/record/edit', 'views/user/record/d
                                 },
                                 {
                                     name: 'passwordInfo',
+                                    type: 'text',
                                     customLabel: '',
-                                    customCode: this.getPasswordSendingMessage()
+                                    customCode: this.passwordInfoMessage
                                 }
 
                             ]

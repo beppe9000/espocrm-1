@@ -29,94 +29,32 @@
 
 namespace Espo\Core\ORM;
 
-use \Espo\Core\Utils\Util;
+use Espo\Entities\User;
 
-class EntityManager extends \Espo\ORM\EntityManager
+use Espo\Core\{
+    Utils\Metadata as EspoMetadata,
+    HookManager,
+    Utils\Util,
+};
+
+use Espo\ORM\EntityManager as BaseEntityManager;
+
+class EntityManager extends BaseEntityManager
 {
-    protected $espoMetadata;
-
-    private $hookManager;
-
-    protected $user;
-
-    protected $container;
-
-    private $repositoryClassNameHash = [];
-
-    private $entityClassNameHash = [];
-
     private $helper;
 
-    public function setContainer(\Espo\Core\Container $container)
-    {
-        $this->container = $container;
-    }
+    public function __construct(
+        array $params,
+        RepositoryFactory $repositoryFactory,
+        EntityFactory $entityFactory,
+        Helper $helper
+    ) {
+        parent::__construct($params, $repositoryFactory, $entityFactory);
 
-    public function getContainer()
-    {
-        return $this->container;
-    }
-
-    public function setUser($user)
-    {
-        $this->user = $user;
-    }
-
-    public function getUser()
-    {
-        return $this->user;
-    }
-
-    public function getEspoMetadata()
-    {
-        return $this->espoMetadata;
-    }
-
-    public function setEspoMetadata($espoMetadata)
-    {
-        $this->espoMetadata = $espoMetadata;
-    }
-
-    public function setHookManager(\Espo\Core\HookManager $hookManager)
-    {
-        $this->hookManager = $hookManager;
-    }
-
-    public function getHookManager()
-    {
-        return $this->hookManager;
-    }
-
-    public function normalizeRepositoryName($name)
-    {
-        if (empty($this->repositoryClassNameHash[$name])) {
-            $className = '\\Espo\\Custom\\Repositories\\' . Util::normilizeClassName($name);
-            if (!class_exists($className)) {
-                $className = $this->espoMetadata->getRepositoryPath($name);
-            }
-            $this->repositoryClassNameHash[$name] = $className;
-        }
-        return $this->repositoryClassNameHash[$name];
-    }
-
-    public function normalizeEntityName($name)
-    {
-        if (empty($this->entityClassNameHash[$name])) {
-            $className = '\\Espo\\Custom\\Entities\\' . Util::normilizeClassName($name);
-            if (!class_exists($className)) {
-                $className = $this->espoMetadata->getEntityPath($name);
-            }
-            $this->entityClassNameHash[$name] = $className;
-        }
-        return $this->entityClassNameHash[$name];
-    }
-
-    public function setHelper(Helper $helper)
-    {
         $this->helper = $helper;
     }
 
-    public function getHelper()
+    public function getHelper() : Helper
     {
         return $this->helper;
     }

@@ -29,15 +29,22 @@
 
 include "bootstrap.php";
 
-$app = new \Espo\Core\Application();
+use Espo\Core\{
+    Application,
+    ApplicationRunners\Client,
+    ApplicationRunners\EntryPoint,
+};
+
+$app = new Application();
+
 if (!$app->isInstalled()) {
     header("Location: install/");
     exit;
 }
 
 if (!empty($_GET['entryPoint'])) {
-    $app->runEntryPoint($_GET['entryPoint']);
+    $app->run(EntryPoint::class);
     exit;
 }
 
-$app->runClient();
+$app->run(Client::class);

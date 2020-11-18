@@ -29,9 +29,10 @@
 
 namespace Espo\Modules\Crm\Controllers;
 
-use \Espo\Core\Exceptions\Error,
-    \Espo\Core\Exceptions\Forbidden,
-    \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
+
+use Espo\Core\Utils\ControllerUtil;
 
 class Activities extends \Espo\Core\Controllers\Base
 {
@@ -250,7 +251,7 @@ class Activities extends \Espo\Core\Controllers\Base
 
         $params = [];
 
-        \Espo\Core\Utils\ControllerUtil::fetchListParamsFromRequest($params, $request, $data);
+        ControllerUtil::fetchListParamsFromRequest($params, $request, $data);
 
         $maxSizeLimit = $this->getConfig()->get('recordListMaxSizeLimit', 200);
         if (empty($params['maxSize'])) {
@@ -265,8 +266,23 @@ class Activities extends \Espo\Core\Controllers\Base
         $result = $service->findActivitiyEntityType($scope, $id, $entityType, $isHistory, $params);
 
         return (object) [
-            'total' => $result->total,
-            'list' => $result->collection->getValueMapList()
+            'total' => $result->getTotal(),
+            'list' => $result->getValueMapList(),
         ];
+    }
+
+    public function getActionBusyRanges($params, $data, $request)
+    {
+        $from = $request->get('from');
+        $to = $request->get('to');
+        $userIdList = $request->get('userIdList');
+
+        if (!$from || !$to || !$userIdList) throw new BadRequest();
+
+        $userIdList = explode(',', $userIdList);
+
+        return $this->getService('Activities')->getBusyRanges(
+            $userIdList, $from, $to, $request->get('entityType'), $request->get('entityId')
+        );
     }
 }

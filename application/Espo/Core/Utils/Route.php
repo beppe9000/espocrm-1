@@ -29,139 +29,125 @@
 
 namespace Espo\Core\Utils;
 
+use Espo\Core\{
+    Exceptions\Error,
+    Utils\Config,
+    Utils\Metadata,
+    Utils\File\Manager as FileManager,
+    Utils\DataCache,
+};
+
 class Route
 {
     protected $data = null;
 
-    private $fileManager;
-    private $config;
-    private $metadata;
+    protected $cacheKey = 'routes';
 
-    protected $cacheFile = 'data/cache/application/routes.php';
-
-    protected $paths = array(
+    protected $paths = [
         'corePath' => 'application/Espo/Resources/routes.json',
         'modulePath' => 'application/Espo/Modules/{*}/Resources/routes.json',
         'customPath' => 'custom/Espo/Custom/Resources/routes.json',
-    );
+    ];
 
-    public function __construct(Config $config, Metadata $metadata, File\Manager $fileManager)
+    private $config;
+    private $metadata;
+    private $fileManager;
+    private $dataCache;
+
+    public function __construct(Config $config, Metadata $metadata, FileManager $fileManager, DataCache $dataCache)
     {
         $this->config = $config;
         $this->metadata = $metadata;
         $this->fileManager = $fileManager;
+        $this->dataCache = $dataCache;
     }
 
-    protected function getConfig()
-    {
-        return $this->config;
-    }
-
-    protected function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
-    }
-
-    public function get($key = '', $returns = null)
+    /**
+     * Get all routes.
+     */
+    public function getFullList() : array
     {
         if (!isset($this->data)) {
             $this->init();
         }
 
-        if (empty($key)) {
-            return $this->data;
-        }
-
-        $keys = explode('.', $key);
-
-        $lastRoute = $this->data;
-        foreach($keys as $keyName) {
-            if (isset($lastRoute[$keyName]) && is_array($lastRoute)) {
-                $lastRoute = $lastRoute[$keyName];
-            } else {
-                return $returns;
-            }
-        }
-
-        return $lastRoute;
-    }
-
-    public function getAll()
-    {
-        return $this->get();
+        return $this->data;
     }
 
     protected function init()
     {
-        if (file_exists($this->cacheFile) && $this->getConfig()->get('useCache')) {
-            $this->data = $this->getFileManager()->getPhpContents($this->cacheFile);
-        } else {
-            $this->data = $this->unify();
+        $useCache = $this->config->get('useCache');
 
-            if ($this->getConfig()->get('useCache')) {
-                $result = $this->getFileManager()->putPhpContents($this->cacheFile, $this->data);
-                if ($result == false) {
-                    throw new \Espo\Core\Exceptions\Error('Route - Cannot save unified routes');
-                }
-            }
+        if ($this->dataCache->has($this->cacheKey) && $useCache) {
+            $this->data = $this->dataCache->get($this->cacheKey);
+
+            return;
+        }
+
+        $this->data = $this->unify();
+
+        if ($useCache) {
+            $this->dataCache->store($this->cacheKey, $this->data);
         }
     }
 
-    /**
-     * Unify routes
-     *
-     * @return array
-     */
-    protected function unify()
+    protected function unify() : array
     {
-        // for custom
-        $data = $this->getAddData([], $this->paths['customPath']);
+        $data = $this->addDataFromFile([], $this->paths['customPath']);
 
-        // for module
         $moduleData = [];
-        foreach ($this->getMetadata()->getModuleList() as $moduleName) {
+
+        foreach ($this->metadata->getModuleList() as $moduleName) {
             $modulePath = str_replace('{*}', $moduleName, $this->paths['modulePath']);
-            foreach ($this->getAddData([], $modulePath) as $row) {
-                $moduleData[$row['method'].$row['route']] = $row;
+
+            foreach ($this->addDataFromFile([], $modulePath) as $row) {
+                $key = $row['method'] . $row['route'];
+
+                $moduleData[$key] = $row;
             }
         }
+
         $data = array_merge($data, array_values($moduleData));
 
-        // for core
-        $data = $this->getAddData($data, $this->paths['corePath']);
+        $data = $this->addDataFromFile($data, $this->paths['corePath']);
 
         return $data;
     }
 
-    protected function getAddData($currData, $routeFile)
+    protected function addDataFromFile(array $currentData, string $routeFile) : array
     {
-        if (file_exists($routeFile)) {
-            $content = $this->getFileManager()->getContents($routeFile);
-            $arrayContent = Json::getArrayData($content);
-            if (empty($arrayContent)) {
-                $GLOBALS['log']->error('Route::unify() - Empty file or syntax error - ['.$routeFile.']');
-                return $currData;
-            }
-
-            $currData = $this->addToData($currData, $arrayContent);
+        if (!file_exists($routeFile)) {
+            return $currentData;
         }
 
-        return $currData;
+        $content = $this->fileManager->getContents($routeFile);
+
+        $data = Json::getArrayData($content);
+
+        if (empty($data)) {
+            $GLOBALS['log']->warning("Route: No data or syntax error in '{$routeFile}'.");
+
+            return $currentData;
+        }
+
+        return $this->appendRoutesToData($currentData, $data);
     }
 
-    protected function addToData($data, $newData)
+    protected function appendRoutesToData(array $data, array $newData) : array
     {
-        if (!is_array($newData)) {
-            return $data;
-        }
-
         foreach ($newData as $route) {
             $route['route'] = $this->adjustPath($route['route']);
+
+            if (isset($route['conditions'])) {
+                $route['noAuth'] = !($route['conditions']['auth'] ?? true);
+
+                unset($route['conditions']);
+            }
+
+            if (self::isRouteInList($route, $data)) {
+                continue;
+            }
+
             $data[] = $route;
         }
 
@@ -169,20 +155,65 @@ class Route
     }
 
     /**
-     * Check and adjust the route path
-     *
-     * @param string $routePath - it can be "/App/user",  "App/user"
-     *
-     * @return string - "/App/user"
+     * Check and adjust the route path.
      */
-    protected function adjustPath($routePath)
+    protected function adjustPath(string $routePath) : string
     {
         $routePath = trim($routePath);
 
-        if (substr($routePath,0,1) != '/') {
-            return '/'.$routePath;
+        // to fast route format
+        $routePath = preg_replace('/\:([a-zA-Z0-9]+)/', '{${1}}', $routePath);
+
+        if (substr($routePath, 0, 1) !== '/') {
+            return '/' . $routePath;
         }
 
         return $routePath;
+    }
+
+    public static function detectBasePath() : string
+    {
+        $scriptName = parse_url($_SERVER['SCRIPT_NAME'] , PHP_URL_PATH);
+        $scriptDir = dirname($scriptName);
+
+        $uri = parse_url('http://any.com' . $_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+        if (stripos($uri, $scriptName) === 0) {
+            return $scriptName;
+        }
+
+        if ($scriptDir !== '/' && stripos($uri, $scriptDir) === 0) {
+            return $scriptDir;
+        }
+
+        return '';
+    }
+
+    public static function detectEntryPointRoute() : string
+    {
+        $basePath = self::detectBasePath();
+
+        $uri = parse_url('http://any.com' . $_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+        if ($uri === $basePath) {
+            return '/';
+        }
+
+        if (stripos($uri, $basePath) === 0) {
+            return substr($uri, strlen($basePath));
+        }
+
+        return '/';
+    }
+
+    static protected function isRouteInList(array $newRoute, array $routeList) : bool
+    {
+        foreach ($routeList as $route) {
+            if (Util::isEquals($route, $newRoute)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

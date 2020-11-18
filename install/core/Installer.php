@@ -27,9 +27,15 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-use Espo\Core\Utils\Util;
-use Espo\Core\Utils\File\Manager as FileManager;
-use Espo\Core\Utils\Config;
+use Espo\Core\{
+    Application,
+    Utils\Util,
+    Utils\File\Manager as FileManager,
+    Utils\Config,
+    Utils\Database\Helper as DatabaseHelper,
+    Utils\PasswordHash,
+    Utils\SystemRequirements,
+};
 
 class Installer
 {
@@ -51,7 +57,7 @@ class Installer
 
     protected $defaultSettings;
 
-    protected $permittedSettingList = array(
+    protected $permittedSettingList = [
         'dateFormat',
         'timeFormat',
         'timeZone',
@@ -69,24 +75,23 @@ class Installer
         'outboundEmailFromName',
         'outboundEmailFromAddress',
         'outboundEmailIsShared',
-    );
+    ];
 
     public function __construct()
     {
         $this->initialize();
 
-        $this->app = new \Espo\Core\Application();
-
-        $user = $this->getEntityManager()->getEntity('User');
-        $this->app->getContainer()->setUser($user);
+        $this->app = new Application();
 
         require_once('install/core/InstallerConfig.php');
+
         $this->installerConfig = new InstallerConfig();
 
         require_once('install/core/SystemHelper.php');
+
         $this->systemHelper = new SystemHelper();
 
-        $this->databaseHelper = new \Espo\Core\Utils\Database\Helper($this->getConfig());
+        $this->databaseHelper = new DatabaseHelper($this->getConfig());
     }
 
     protected function initialize()
@@ -96,7 +101,7 @@ class Installer
         $configPath = $config->getConfigPath();
 
         if (!file_exists($configPath)) {
-            $fileManager->putPhpContents($configPath, array());
+            $fileManager->putPhpContents($configPath, []);
         }
 
         $data = include('data/config.php');
@@ -149,7 +154,7 @@ class Installer
     {
         if (!isset($this->passwordHash)) {
             $config = $this->getConfig();
-            $this->passwordHash = new \Espo\Core\Utils\PasswordHash($config);
+            $this->passwordHash = new PasswordHash($config);
         }
 
         return $this->passwordHash;
@@ -163,8 +168,7 @@ class Installer
     protected function auth()
     {
         if (!$this->isAuth) {
-            $auth = new \Espo\Core\Utils\Auth($this->app->getContainer());
-            $auth->useNoAuth();
+            $this->app->setupSystemUser();
 
             $this->isAuth = true;
         }
@@ -186,7 +190,14 @@ class Installer
     protected function getLanguage()
     {
         if (!isset($this->language)) {
-            $this->language = $this->app->getContainer()->get('language');
+            try {
+                $this->language = $this->app->getContainer()->get('defaultLanguage');
+            } catch (Throwable $e) {
+                echo "Error: " . $e->getMessage();
+                $GLOBALS['log']->error($e->getMessage());
+
+                die;
+            }
         }
 
         return $this->language;
@@ -194,7 +205,7 @@ class Installer
 
     public function getLanguageList($isTranslated = true)
     {
-        $languageList = $this->app->getContainer()->get('config')->get('languageList');
+        $languageList = $this->app->getContainer()->get('metadata')->get(['app', 'language', 'list']);
 
         if ($isTranslated) {
             return $this->getLanguage()->translate('language', 'options', 'Global', $languageList);
@@ -205,7 +216,7 @@ class Installer
 
     protected function getCurrencyList()
     {
-        return $this->app->getMetadata()->get('app.currency.list');
+        return $this->app->getContainer()->get('metadata')->get('app.currency.list');
     }
 
     public function getInstallerConfigData()
@@ -215,7 +226,7 @@ class Installer
 
     public function getSystemRequirementList($type, $requiredOnly = false, array $additionalData = null)
     {
-         $systemRequirementManager = new \Espo\Core\Utils\SystemRequirements($this->app->getContainer());
+         $systemRequirementManager = new SystemRequirements($this->app->getContainer());
          return $systemRequirementManager->getRequiredListByType($type, $requiredOnly, $additionalData);
     }
 
@@ -225,7 +236,8 @@ class Installer
 
         try {
             $pdo = $this->getDatabaseHelper()->createPdoConnection($params);
-        } catch (\Exception $e) {
+        }
+        catch (Exception $e) {
             if ($isCreateDatabase && $e->getCode() == '1049') {
                 $modParams = $params;
                 unset($modParams['dbname']);
@@ -263,7 +275,7 @@ class Installer
 
         $data = [
             'database' => array_merge($databaseDefaults, $saveData['database']),
-            'language' => $saveData['language'],
+            'language' => $saveData['language'] ?? 'en_US',
             'siteUrl' => !empty($saveData['siteUrl']) ? $saveData['siteUrl'] : $this->getSystemHelper()->getBaseUrl(),
             'passwordSalt' => $this->getPasswordHash()->generateSalt(),
             'cryptKey' => $this->getContainer()->get('crypt')->generateKey(),
@@ -306,13 +318,17 @@ class Installer
         $result = false;
 
         try {
-            $result = $this->app->getContainer()->get('dataManager')->rebuild();
-        } catch (\Exception $e) {
+            $this->app->getContainer()->get('dataManager')->rebuild();
+
+            return true;
+        }
+        catch (Exception $e) {
             $this->auth();
-            $result = $this->app->getContainer()->get('dataManager')->rebuild();
+
+            $this->app->getContainer()->get('dataManager')->rebuild();
         }
 
-        return $result;
+        return true;
     }
 
     public function savePreferences($preferences)
@@ -328,8 +344,7 @@ class Installer
 
         $res = $this->saveConfig($preferences);
 
-        /*save these settings for admin*/
-        $this->setAdminPreferences($preferences);
+        $this->saveAdminPreferences($preferences);
 
         return $res;
     }
@@ -395,22 +410,31 @@ class Installer
     {
         $this->auth();
 
-        $user = array(
+        $result = $this->createRecord('User', [
             'id' => '1',
             'userName' => $userName,
             'password' => $this->getPasswordHash()->hash($password),
             'lastName' => 'Admin',
             'type' => 'admin',
-        );
+        ]);
 
-        $result = $this->createRecord('User', $user);
+        $this->saveAdminPreferences([
+            'dateFormat' => '',
+            'timeFormat' => '',
+            'timeZone' => '',
+            'weekStart' => -1,
+            'defaultCurrency' => '',
+            'language' => '',
+            'thousandSeparator' => $this->getConfig()->get('thousandSeparator', ','),
+            'decimalMark' => $this->getConfig()->get('decimalMark', '.'),
+        ]);
 
         return $result;
     }
 
-    protected function setAdminPreferences($preferences)
+    protected function saveAdminPreferences($preferences)
     {
-        $allowedPreferences = array(
+        $permittedSettingList = array(
             'dateFormat',
             'timeFormat',
             'timeZone',
@@ -421,7 +445,7 @@ class Installer
             'language',
         );
 
-        $data = array_intersect_key($preferences, array_flip($allowedPreferences));
+        $data = array_intersect_key($preferences, array_flip($permittedSettingList));
         if (empty($data)) {
             return true;
         }
@@ -469,12 +493,14 @@ class Installer
     {
         if (!$this->defaultSettings) {
 
-            $settingDefs = $this->app->getMetadata()->get('entityDefs.Settings.fields');
+            $settingDefs = $this->app->getContainer()->get('metadata')->get('entityDefs.Settings.fields');
 
-            $defaults = array();
+            $defaults = [];
+
             foreach ($this->permittedSettingList as $fieldName) {
-
-                if (!isset($settingDefs[$fieldName])) continue;
+                if (!isset($settingDefs[$fieldName])) {
+                    continue;
+                }
 
                 switch ($fieldName) {
                     case 'defaultCurrency':
@@ -577,7 +603,7 @@ class Installer
 
             try {
                 $result &= $sth->execute();
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
                 $GLOBALS['log']->warning('Error executing the query: ' . $query);
             }
 

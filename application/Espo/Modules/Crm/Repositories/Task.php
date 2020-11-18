@@ -37,37 +37,7 @@ class Task extends \Espo\Core\Repositories\Event
 
     protected $reminderSkippingStatusList = ['Completed', 'Canceled'];
 
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('dateTime');
-        $this->addDependency('config');
-    }
-
-    protected function getConfig()
-    {
-        return $this->getInjection('config');
-    }
-
-    protected function getDateTime()
-    {
-        return $this->getInjection('dateTime');
-    }
-
-    protected function convertDateTimeToDefaultTimezone($string)
-    {
-        $dateTime = \DateTime::createFromFormat($this->getDateTime()->getInternalDateTimeFormat(), $string);
-        $timeZone = $this->getConfig()->get('timeZone');
-        if (empty($timeZone)) {
-            $timeZone = 'UTC';
-        }
-        $tz = $timezone = new \DateTimeZone($timeZone);
-
-        if ($dateTime) {
-            return $dateTime->setTimezone($tz)->format($this->getDateTime()->getInternalDateTimeFormat());
-        }
-        return null;
-    }
+    protected $preserveDuration = false;
 
     protected function beforeSave(Entity $entity, array $options = array())
     {
@@ -76,30 +46,6 @@ class Task extends \Espo\Core\Repositories\Event
                 $entity->set('dateCompleted', date('Y-m-d H:i:s'));
             } else {
                 $entity->set('dateCompleted', null);
-            }
-        }
-
-        if ($entity->has('dateStartDate')) {
-            $dateStartDate = $entity->get('dateStartDate');
-            if (!empty($dateStartDate)) {
-                $dateStart = $dateStartDate . ' 00:00:00';
-                $dateStart = $this->convertDateTimeToDefaultTimezone($dateStart);
-
-                $entity->set('dateStart', $dateStart);
-            } else {
-                $entity->set('dateStartDate', null);
-            }
-        }
-
-        if ($entity->has('dateEndDate')) {
-            $dateEndDate = $entity->get('dateEndDate');
-            if (!empty($dateEndDate)) {
-                $dateEnd = $dateEndDate . ' 00:00:00';
-                $dateEnd = $this->convertDateTimeToDefaultTimezone($dateEnd);
-
-                $entity->set('dateEnd', $dateEnd);
-            } else {
-                $entity->set('dateEndDate', null);
             }
         }
 
@@ -118,12 +64,15 @@ class Task extends \Espo\Core\Repositories\Event
             if ($parentId && $parentType) {
                 if ($this->getEntityManager()->hasRepository($parentType)) {
                     $columnList = ['id', 'name'];
+
                     if ($this->getEntityManager()->getMetadata()->get($parentType, ['fields', 'accountId'])) {
                         $columnList[] = 'accountId';
                     }
+
                     if ($this->getEntityManager()->getMetadata()->get($parentType, ['fields', 'contactId'])) {
                         $columnList[] = 'contactId';
                     }
+
                     if ($parentType === 'Lead') {
                         $columnList[] = 'status';
                         $columnList[] = 'createdAccountId';
@@ -131,7 +80,12 @@ class Task extends \Espo\Core\Repositories\Event
                         $columnList[] = 'createdContactId';
                         $columnList[] = 'createdContactName';
                     }
-                    $parent = $this->getEntityManager()->getRepository($parentType)->select($columnList)->get($parentId);
+
+                    $parent = $this->getEntityManager()
+                        ->getRepository($parentType)
+                        ->select($columnList)
+                        ->where(['id' => $parentId])
+                        ->findOne();
                 }
             }
 
@@ -179,7 +133,12 @@ class Task extends \Espo\Core\Repositories\Event
                 &&
                 !$entity->get('accountName')
             ) {
-                $account = $this->getEntityManager()->getRepository('Account')->select(['id', 'name'])->get($entity->get('accountId'));
+                $account = $this->getEntityManager()
+                    ->getRepository('Account')
+                    ->select(['id', 'name'])
+                    ->where(['id' => $entity->get('accountId')])
+                    ->findOne();
+
                 if ($account) {
                     $entity->set('accountName', $account->get('name'));
                 }
@@ -190,13 +149,17 @@ class Task extends \Espo\Core\Repositories\Event
                 &&
                 !$entity->get('contactName')
             ) {
-                $contact = $this->getEntityManager()->getRepository('Contact')->select(['id', 'name'])->get($entity->get('contactId'));
+                $contact = $this->getEntityManager()
+                    ->getRepository('Contact')
+                    ->select(['id', 'name'])
+                    ->where(['id' => $entity->get('contactId')])
+                    ->findOne();
+
                 if ($contact) {
                     $entity->set('contactName', $contact->get('name'));
                 }
             }
         }
-
 
         parent::beforeSave($entity, $options);
     }

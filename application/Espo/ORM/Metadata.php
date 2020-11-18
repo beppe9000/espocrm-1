@@ -29,31 +29,81 @@
 
 namespace Espo\ORM;
 
+use InvalidArgumentException;
+
+/**
+ * Metadata of all entities.
+ */
 class Metadata
 {
-    protected $data = array();
+    protected $data;
 
-    public function setData($data)
+    public function __construct(array $data = [])
     {
         $this->data = $data;
     }
 
-    public function get($entityType, $key = null, $default = null)
+    public function setData(array $data)
     {
-        if (!array_key_exists($entityType, $this->data)) {
-            return null;
-        }
-        $data = $this->data[$entityType];
-        if (!$key) return $data;
-
-        return \Espo\Core\Utils\Util::getValueByKey($data, $key, $default);
+        $this->data = $data;
     }
 
-    public function has($entityType)
+    /**
+     * Get a parameter or parameters by key. Key can be a string or array path.
+     */
+    public function get(string $entityType, $key = null, $default = null)
     {
-        if (!array_key_exists($entityType, $this->data)) {
+        if (!$this->has($entityType)) {
             return null;
         }
-        return true;
+
+        $data = $this->data[$entityType];
+
+        if ($key === null) {
+            return $data;
+        }
+
+        return self::getValueByKey($data, $key, $default);
+    }
+
+    /**
+     * Whether an entity type is available.
+     */
+    public function has(string $entityType) : bool
+    {
+        return array_key_exists($entityType, $this->data);
+    }
+
+    private static function getValueByKey(array $data, $key = null, $default = null)
+    {
+        if (!is_string($key) && !is_array($key) && !is_null($key)) {
+            throw new InvalidArgumentException();
+        }
+
+        if (is_null($key) || empty($key)) {
+            return $data;
+        }
+
+        if (!is_string($key) && !is_array($key)) {
+            throw new InvalidArgumentException();
+        }
+
+        $path = $key;
+
+        if (is_string($key)) {
+            $path = explode('.', $key);
+        }
+
+        $item = $data;
+
+        foreach ($path as $k) {
+            if (!array_key_exists($k, $item)) {
+                return $default;
+            }
+
+            $item = $item[$k];
+        }
+
+        return $item;
     }
 }

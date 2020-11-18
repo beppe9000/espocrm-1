@@ -29,35 +29,93 @@
 
 namespace Espo\Core\Console;
 
+use Espo\Core\{
+    InjectableFactory,
+    Utils\Metadata,
+    Utils\Util,
+};
+
+use Espo\Core\Exceptions\Error;
+
+/**
+ * Processes console commands. A console command can be run in CLI by runnig `php command.php`.
+ */
 class CommandManager
 {
-    private $container;
+    protected $injectableFactory;
+    protected $metadata;
 
-    public function __construct(\Espo\Core\Container $container)
+    public function __construct(InjectableFactory $injectableFactory, Metadata $metadata)
     {
-        $this->container = $container;
+        $this->injectableFactory = $injectableFactory;
+        $this->metadata = $metadata;
     }
 
-    public function run(string $command)
+    public function run(array $argv)
     {
-        $command = ucfirst(\Espo\Core\Utils\Util::hyphenToCamelCase($command));
+        $command = isset($argv[1]) ? trim($argv[1]) : null;
 
+        if (!$command) {
+            $msg = "Command name is not specifed.";
+
+            echo $msg . "\n";
+
+            exit;
+        }
+
+        $command = ucfirst(Util::hyphenToCamelCase($command));
+
+        $params = $this->getParams($argv);
+
+        $options = $params['options'];
+        $flagList = $params['flagList'];
+        $argumentList = $params['argumentList'];
+
+        $className = $this->getClassName($command);
+
+        $obj = $this->injectableFactory->create($className);
+
+        return $obj->run($options, $flagList, $argumentList);
+    }
+
+    protected function getClassName(string $command) : string
+    {
+        $className =
+            $this->metadata->get(['app', 'consoleCommands', lcfirst($command), 'className']) ??
+            'Espo\\Core\\Console\\Commands\\' . $command;
+
+        if (!class_exists($className)) {
+            $msg = "Command '{$command}' does not exist.";
+
+            echo $msg . "\n";
+
+            exit;
+        }
+
+        return $className;
+    }
+
+    protected function getParams(array $argv) : array
+    {
         $argumentList = [];
         $options = [];
         $flagList = [];
 
         $skipIndex = 1;
-        if (isset($_SERVER['argv'][0]) && $_SERVER['argv'][0] === 'command.php') {
+
+        if (isset($argv[0]) && preg_match('/command\.php$/', $argv[0])) {
             $skipIndex = 2;
         }
 
-        foreach ($_SERVER['argv'] as $i => $item) {
+        foreach ($argv as $i => $item) {
             if ($i < $skipIndex) continue;
 
             if (strpos($item, '--') === 0 && strpos($item, '=') > 2) {
                 list($name, $value) = explode('=', substr($item, 2));
-                $name = \Espo\Core\Utils\Util::hyphenToCamelCase($name);
+                $name = Util::hyphenToCamelCase($name);
                 $options[$name] = $value;
+            } else if (strpos($item, '--') === 0) {
+                $flagList[] = Util::hyphenToCamelCase(substr($item, 2));
             } else if (strpos($item, '-') === 0) {
                 $flagList[] = substr($item, 1);
             } else {
@@ -65,14 +123,10 @@ class CommandManager
             }
         }
 
-        $className = '\\Espo\\Core\\Console\\Commands\\' . $command;
-        $className = $this->container->get('metadata')->get(['app', 'consoleCommands', $command, 'className'], $className);
-        if (!class_exists($className)) {
-            $msg = "Command '{$command}' does not exist.";
-            echo $msg . "\n";
-            throw new \Espo\Core\Exceptions\Error($msg);
-        }
-        $impl = new $className($this->container);
-        return $impl->run($options, $flagList, $argumentList);
+        return [
+            'argumentList' => $argumentList,
+            'options' => $options,
+            'flagList' => $flagList,
+        ];
     }
 }

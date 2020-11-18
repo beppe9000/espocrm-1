@@ -181,10 +181,11 @@ class Converter
         $schema = $this->getSchema(true);
 
         $indexList = SchemaUtils::getIndexList($ormMeta);
-        $fieldListExceededIndexMaxLength = SchemaUtils::getFieldListExceededIndexMaxLength($ormMeta, $this->getMaxIndexLength());
 
         $tables = array();
         foreach ($ormMeta as $entityName => $entityParams) {
+
+            if ($entityParams['skipRebuild'] ?? false) continue;
 
             $tableName = Util::toUnderScore($entityName);
 
@@ -223,10 +224,6 @@ class Converter
                 if (!in_array($fieldType, $this->typeList)) {
                     $GLOBALS['log']->debug('Converters\Schema::process(): Field type ['.$fieldType.'] does not exist '.$entityName.':'.$fieldName);
                     continue;
-                }
-
-                if (isset($fieldListExceededIndexMaxLength[$entityName]) && in_array($fieldName, $fieldListExceededIndexMaxLength[$entityName])) {
-                    $fieldParams['utf8mb3'] = true;
                 }
 
                 $columnName = Util::toUnderScore($fieldName);
@@ -282,6 +279,9 @@ class Converter
     protected function prepareManyMany($entityName, $relationParams, $tables)
     {
         $tableName = Util::toUnderScore($relationParams['relationName']);
+        $GLOBALS['log']->debug('DBAL: prepareManyMany invoked for ' . $entityName, [
+            'tableName' => $tableName, 'parameters' => $relationParams
+        ]);
 
         if ($this->getSchema()->hasTable($tableName)) {
             $GLOBALS['log']->debug('DBAL: Table ['.$tableName.'] exists.');
@@ -297,16 +297,21 @@ class Converter
 
         //add midKeys to a schema
         $uniqueIndex = array();
-        foreach($relationParams['midKeys'] as $index => $midKey) {
-
-            $columnName = Util::toUnderScore($midKey);
-            $table->addColumn($columnName, $this->idParams['dbType'], $this->getDbFieldParams(array(
-                'type' => 'foreignId',
-                'len' => $this->idParams['len'],
-            )));
-            $table->addIndex(array($columnName), SchemaUtils::generateIndexName($columnName));
-
-            $uniqueIndex[] = $columnName;
+        if (empty($relationParams['midKeys'])) {
+            $GLOBALS['log']->debug('REBUILD: midKeys are empty!', [
+                'scope' => $entityName, 'tableName' => $tableName,
+                'parameters' => $relationParams
+            ]);
+        } else {
+            foreach($relationParams['midKeys'] as $index => $midKey) {
+                $columnName = Util::toUnderScore($midKey);
+                $table->addColumn($columnName, $this->idParams['dbType'], $this->getDbFieldParams(array(
+                    'type' => 'foreignId',
+                    'len' => $this->idParams['len'],
+                )));
+                $table->addIndex(array($columnName), SchemaUtils::generateIndexName($columnName));
+                $uniqueIndex[] = $columnName;
+            }
         }
         //END: add midKeys to a schema
 

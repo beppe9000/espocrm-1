@@ -29,7 +29,7 @@
 
 namespace Espo\SelectManagers;
 
-class Import extends \Espo\Core\SelectManagers\Base
+class Import extends \Espo\Core\Select\SelectManager
 {
     protected function access(&$result)
     {

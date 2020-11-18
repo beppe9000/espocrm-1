@@ -29,23 +29,17 @@
 
 namespace Espo\Core\Formula\Functions\NumericGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class MultiplicationType extends \Espo\Core\Formula\Functions\Base
+class MultiplicationType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return '';
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error('Value for \'Multiplication\' item is not array.');
-        }
-
         $result = 1;
-        foreach ($item->value as $subItem) {
+        foreach ($args as $subItem) {
             $part = $this->evaluate($subItem);
 
             if (!is_float($part) && !is_int($part)) {

@@ -29,31 +29,45 @@
 
 namespace tests\unit\Espo\Core\Formula;
 
-use \Espo\ORM\Entity;
+use Espo\Core\Formula\AttributeFetcher;
+use Espo\Core\Formula\Processor;
+use Espo\Core\Formula\Argument;
+
+use Espo\Core\Utils\DateTime;
+use Espo\Core\Utils\NumberUtil;
+use Espo\Core\Utils\Config;
+use Espo\Core\Utils\Log;
+
+use Espo\Core\Repositories\Database as DatabaseRepository;
+use Espo\Core\ORM\EntityManager;
+
+use Espo\Core\Container;
+
+use Espo\Entities\User;
+
+use Espo\ORM\Entity;
+
+use Espo\Core\ORM\Entity as EntityCore;
+
+use Espo\Core\InjectableFactory;
+
+use tests\unit\ContainerMocker;
 
 class FormulaTest extends \PHPUnit\Framework\TestCase
 {
-
     protected function setUp() : void
     {
-        $container = $this->container = $this->getMockBuilder('\\Espo\\Core\\Container')->disableOriginalConstructor()->getMock();
-
-        $attributeFetcher = new \Espo\Core\Formula\AttributeFetcher();
-
-        $this->functionFactory = new \Espo\Core\Formula\FunctionFactory($container, $attributeFetcher);
-        $this->formula = new \Espo\Core\Formula\Formula($this->functionFactory);
-
         $this->entity = $this->getEntityMock();
-        $this->entityManager = $this->getMockBuilder('\\Espo\\ORM\\EntityManager')->disableOriginalConstructor()->getMock();
-        $this->repository = $this->getMockBuilder('\\Espo\\ORM\\Repositories\\RDB')->disableOriginalConstructor()->getMock();
+        $this->entityManager = $this->getMockBuilder(EntityManager::class)->disableOriginalConstructor()->getMock();
+        $this->repository = $this->getMockBuilder(DatabaseRepository::class)->disableOriginalConstructor()->getMock();
 
         date_default_timezone_set('UTC');
 
-        $this->dateTime = new \Espo\Core\Utils\DateTime();
+        $this->dateTime = new DateTime();
 
-        $this->number = new \Espo\Core\Utils\NumberUtil();
+        $this->number = new NumberUtil();
 
-        $this->config = $this->getMockBuilder('\\Espo\\Core\\Utils\\Config')->disableOriginalConstructor()->getMock();
+        $this->config = $this->getMockBuilder(Config::class)->disableOriginalConstructor()->getMock();
         $this->config
             ->expects($this->any())
             ->method('get')
@@ -61,36 +75,52 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                 ['timeZone', null, 'UTC']
             ]));
 
-        $this->user = new \tests\unit\testData\Entities\User();
+        $this->user = $this->getMockBuilder(User::class)->disableOriginalConstructor()->getMock();
+
+        $this->log = $this->getMockBuilder(Log::class)->disableOriginalConstructor()->getMock();
 
         $this->user->id = '1';
 
-        $container
+        $this->user
             ->expects($this->any())
             ->method('get')
             ->will($this->returnValueMap([
-                ['entityManager', $this->entityManager],
-                ['dateTime', $this->dateTime],
-                ['number', $this->number],
-                ['config', $this->config],
-                ['user', $this->user]
+                ['id', [], '1']
             ]));
+
+
+        $containerMocker = new ContainerMocker($this);
+
+        $this->container = $containerMocker->create([
+            'entityManager' => $this->entityManager,
+            'dateTime' => $this->dateTime,
+            'number' => $this->number,
+            'config' => $this->config,
+            'user' => $this->user,
+            'log' => $this->log,
+        ]);
     }
 
     protected function tearDown() : void
     {
         $this->container = null;
-        $this->functionFactory = null;
-        $this->formula = null;
         $this->entity = null;
         $this->entityManager = null;
         $this->repository = null;
         $this->config = null;
     }
 
+    protected function createProcessor($variables = null)
+    {
+        $injectableFactory = new InjectableFactory($this->container);
+        $attributeFetcher = new AttributeFetcher();
+
+        return new Processor($injectableFactory, $attributeFetcher, null, $this->entity, $variables);
+    }
+
     protected function getEntityMock()
     {
-        return $this->getMockBuilder('\\Espo\\Core\\ORM\\Entity')->disableOriginalConstructor()->getMock();
+        return $this->getMockBuilder(EntityCore::class)->disableOriginalConstructor()->getMock();
     }
 
     protected function setEntityAttributes($entity, $attributes)
@@ -121,25 +151,25 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
 
     function testAttribute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "attribute",
                 "value": "name"
             }
-        ');
+        '));
 
-        $this->setEntityAttributes($this->entity, array(
+        $this->setEntityAttributes($this->entity, [
             'name' => 'Test'
-        ));
+        ]);
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals('Test', $result);
     }
 
     function testEntityAttribute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\attribute",
                 "value": [
@@ -149,20 +179,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $this->setEntityAttributes($this->entity, array(
+        $this->setEntityAttributes($this->entity, [
             'name' => 'Test'
-        ));
+        ]);
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals('Test', $result);
     }
 
     function testEntityAttributeFetched()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\attributeFetched",
                 "value": [
@@ -172,20 +202,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $this->setEntityFetchedAttributes($this->entity, array(
+        $this->setEntityFetchedAttributes($this->entity, [
             'name' => 'Test'
-        ));
+        ]);
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals('Test', $result);
     }
 
     function testIsAttributeChanged()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\isAttributeChanged",
                 "value": [
@@ -195,25 +225,25 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $this->setEntityFetchedAttributes($this->entity, array(
+        $this->setEntityFetchedAttributes($this->entity, [
             'name' => 'Test'
-        ));
+        ]);
 
         $this->entity
             ->expects($this->once())
             ->method('isAttributeChanged')
             ->will($this->returnValue(true));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testIsAttributeNotChanged()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\isAttributeNotChanged",
                 "value": [
@@ -223,7 +253,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityFetchedAttributes($this->entity, array(
             'name' => 'Test'
@@ -234,14 +264,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
             ->method('isAttributeChanged')
             ->will($this->returnValue(false));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testHasValue()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\isRelated",
                 "value": [
@@ -255,7 +285,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->entity
             ->expects($this->any())
@@ -274,14 +304,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
             ->method('getRepository')
             ->will($this->returnValue($this->repository));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testAddLinkMultipleId()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\addLinkMultipleId",
                 "value": [
@@ -295,7 +325,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $entity = $this->entity;
 
@@ -308,14 +338,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
             ->method('addLinkMultipleId')
             ->with('teams', '1');
 
-        $this->formula->process($item, $this->entity);
+        $this->createProcessor()->process($item);
 
         $this->assertTrue(true);
     }
 
     function testRemoveLinkMultipleId()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "entity\\\\removeLinkMultipleId",
                 "value": [
@@ -329,7 +359,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $entity = $this->entity;
 
@@ -342,14 +372,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
             ->method('removeLinkMultipleId')
             ->with('teams', '1');
 
-        $this->formula->process($item, $this->entity);
+        $this->createProcessor()->process($item);
 
         $this->assertTrue(true);
     }
 
     function testAnd()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "logical\\\\and",
                 "value": [
@@ -381,20 +411,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'name' => 'Test'
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testOr()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "logical\\\\or",
                 "value": [
@@ -408,16 +438,16 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testAndFalse()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "logical\\\\and",
                 "value": [
@@ -431,20 +461,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'name' => 'Test'
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertFalse($result);
     }
 
     function testNot()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "logical\\\\not",
                 "value": {
@@ -479,20 +509,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     ]
                 }
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'name' => 'Test'
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertFalse($result);
     }
 
     function testConcatenation()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\concatenation",
                 "value": [
@@ -527,20 +557,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'name' => 'Test'
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals('Hello Test 12', $result);
     }
 
     function testStringLength()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\length",
                 "value": [
@@ -550,14 +580,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(9, $actual);
     }
 
     function testStringContains()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\contains",
                 "value": [
@@ -571,11 +601,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertTrue($actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\contains",
                 "value": [
@@ -589,11 +619,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertTrue($actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\contains",
                 "value": [
@@ -607,14 +637,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertFalse($actual);
     }
 
     function testStringTest()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\test",
                 "value": [
@@ -628,11 +658,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertTrue($actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\test",
                 "value": [
@@ -646,14 +676,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertFalse($actual);
     }
 
     function testSummationAndDivision()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "numeric\\\\summation",
                 "value": [
@@ -684,20 +714,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 4
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals(2 + 3 + 4 + (5 - 2), $result);
     }
 
     function testMultiplication()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "numeric\\\\multiplication",
                 "value": [
@@ -715,20 +745,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 4.2
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals(2 * 3 * 4.2, $result);
     }
 
     function testDivision()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "numeric\\\\division",
                 "value": [
@@ -742,16 +772,39 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals(3 / 2, $result);
     }
 
+    function testModulo()
+    {
+        $item = new Argument(json_decode('
+            {
+                "type": "numeric\\\\modulo",
+                "value": [
+                    {
+                        "type": "value",
+                        "value": 3
+                    },
+                    {
+                        "type": "value",
+                        "value": 2
+                    }
+                ]
+            }
+        '));
+
+        $result = $this->createProcessor()->process($item);
+
+        $this->assertEquals(3 % 2, $result);
+    }
+
     function testIfThenElse1()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "ifThenElse",
                 "value": [
@@ -786,20 +839,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'test' => true
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals(2, $result);
     }
 
     function testIfThenElse2()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "ifThenElse",
                 "value": [
@@ -834,21 +887,65 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'test' => false,
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals(1, $result);
     }
 
+    function testIfThen1()
+    {
+        $item = new Argument(json_decode('
+            {
+                "type": "ifThen",
+                "value": [
+                    {
+                        "type": "condition",
+                        "value": {
+                            "type": "logical\\\\and",
+                            "value": [
+                                {
+                                    "type": "comparison\\\\equals",
+                                    "value": [
+                                        {
+                                            "type": "attribute",
+                                            "value": "test"
+                                        },
+                                        {
+                                            "type": "value",
+                                            "value": true
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "type": "value",
+                        "value": 2
+                    }
+                ]
+            }
+        '));
+
+        $this->setEntityAttributes($this->entity, [
+            'test' => true,
+        ]);
+
+        $result = $this->createProcessor()->process($item);
+
+        $this->assertEquals(2, $result);
+    }
+
     function testComparisonEquals()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
@@ -862,20 +959,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonEqualsRelated()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
@@ -889,7 +986,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $parent = $this->getEntityMock();
 
@@ -902,14 +999,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
         ));
 
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonEqualsFalse()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
@@ -923,20 +1020,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertFalse($result);
     }
 
     function testComparisonNotEquals()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\notEquals",
                 "value": [
@@ -950,20 +1047,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonNotEqualsNull()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\notEquals",
                 "value": [
@@ -977,46 +1074,64 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
         $this->assertTrue($result);
     }
 
     function testComparisonEqualsArray()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
                     {
-                        "type": "attribute",
-                        "value": ["parentId", "parentType"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "1"
+                            },
+                            {
+                                "type": "value",
+                                "value": "User"
+                            }
+                        ]
                     },
                     {
-                        "type": "value",
-                        "value": ["1", "User"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "1"
+                            },
+                            {
+                                "type": "value",
+                                "value": "User"
+                            }
+                        ]
                     }
                 ]
             }
-        ');
+        '));
 
-        $this->setEntityAttributes($this->entity, array(
+        $this->setEntityAttributes($this->entity, [
             'parentId' => '1',
             'parentType' => 'User'
-        ));
+        ]);
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonGreaterThan()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\greaterThan",
                 "value": [
@@ -1030,20 +1145,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonLessThan()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\lessThan",
                 "value": [
@@ -1057,20 +1172,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 3
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonGreaterThanOrEquals()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\greaterThanOrEquals",
                 "value": [
@@ -1084,20 +1199,20 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 4
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testComparisonLessThanOrEquals()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\lessThanOrEquals",
                 "value": [
@@ -1111,34 +1226,34 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $this->setEntityAttributes($this->entity, array(
             'amount' => 4
         ));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertTrue($result);
     }
 
     function testStringNewLine()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "value",
                 "value": "test\\ntest"
             }
-        ');
+        '));
 
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
 
         $this->assertEquals("test\ntest", $result);
     }
 
     function testVariable()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
@@ -1152,18 +1267,18 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $result = $this->formula->process($item, $this->entity, (object)[
+        $result = $this->createProcessor((object)[
             'counter' => 4
-        ]);
+        ])->process($item);
 
         $this->assertTrue($result);
     }
 
     function testAssign()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "assign",
                 "value": [
@@ -1177,19 +1292,19 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $variables = (object)[
             'counter' => 4
         ];
-        $this->formula->process($item, $this->entity, $variables);
+        $this->createProcessor($variables)->process($item);
 
         $this->assertEquals(5, $variables->counter);
     }
 
     function testSetAttribute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "setAttribute",
                 "value": [
@@ -1203,7 +1318,7 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $variables = (object)[
             'counter' => 4
@@ -1214,12 +1329,12 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
             ->method('set')
             ->with('amount', 4);
 
-        $this->formula->process($item, $this->entity, $variables);
+        $this->createProcessor($variables)->process($item);
     }
 
     function testCompareDates()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\equals",
                 "value": [
@@ -1233,14 +1348,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
         $this->setEntityAttributes($this->entity, array(
             'dateStart' => '2017-01-01'
         ));
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
         $this->assertTrue($result);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\greaterThan",
                 "value": [
@@ -1254,14 +1369,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
         $this->setEntityAttributes($this->entity, array(
             'dateStart' => '2017-01-01'
         ));
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
         $this->assertTrue($result);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "comparison\\\\greaterThanOrEquals",
                 "value": [
@@ -1275,17 +1390,17 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
         $this->setEntityAttributes($this->entity, array(
             'dateStart' => '2017-01-01'
         ));
-        $result = $this->formula->process($item, $this->entity);
+        $result = $this->createProcessor()->process($item);
         $this->assertTrue($result);
     }
 
     function testNumberAbs()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\abs",
                 "value": [
@@ -1295,14 +1410,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(20, $actual);
     }
 
     function testNumberCeil()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\ceil",
                 "value": [
@@ -1312,14 +1427,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(21, $actual);
     }
 
     function testNumberFloor()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\floor",
                 "value": [
@@ -1329,14 +1444,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(20, $actual);
     }
 
     function testNumberFormat()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\format",
                 "value": [
@@ -1350,11 +1465,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('20.00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\format",
                 "value": [
@@ -1372,14 +1487,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('20,00', $actual);
     }
 
     function testNumberRound()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\round",
                 "value": [
@@ -1393,11 +1508,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(1.1, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "number\\\\round",
                 "value": [
@@ -1407,33 +1522,55 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(3, $actual);
+    }
+
+    function testNumberRandomInt()
+    {
+        $item = new Argument(json_decode('
+            {
+                "type": "number\\\\randomInt",
+                "value": [
+                    {
+                        "type": "value",
+                        "value": 0
+                    },
+                    {
+                        "type": "value",
+                        "value": 10
+                    }
+                ]
+            }
+        '));
+        $actual = $this->createProcessor()->process($item);
+
+        $this->assertIsInt($actual);
     }
 
     function testDatetime()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\now"
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(date('Y-m-d H:i:s'), $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\today"
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(date('Y-m-d'), $actual);
     }
 
     function testDatetimeFormat()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\format",
                 "value": [
@@ -1451,14 +1588,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-10-20 02:15 pm', $actual);
     }
 
     function testDatetimeYear()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\year",
                 "value": [
@@ -1468,11 +1605,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(2017, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\year",
                 "value": [
@@ -1482,11 +1619,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(2017, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\year",
                 "value": [
@@ -1496,11 +1633,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(0, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\year",
                 "value": [
@@ -1514,14 +1651,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(2018, $actual);
     }
 
     function testDatetimeMonth()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\month",
                 "value": [
@@ -1531,11 +1668,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(10, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\month",
                 "value": [
@@ -1545,11 +1682,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(10, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\month",
                 "value": [
@@ -1563,14 +1700,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(12, $actual);
     }
 
     function testDatetimeDate()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\date",
                 "value": [
@@ -1580,11 +1717,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(2, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\date",
                 "value": [
@@ -1594,11 +1731,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(20, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\date",
                 "value": [
@@ -1612,14 +1749,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(3, $actual);
     }
 
     function testDatetimeHour()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\hour",
                 "value": [
@@ -1629,11 +1766,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(14, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\hour",
                 "value": [
@@ -1643,11 +1780,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(0, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\hour",
                 "value": [
@@ -1661,14 +1798,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(16, $actual);
     }
 
     function testDatetimeMinute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\minute",
                 "value": [
@@ -1678,11 +1815,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(5, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\hour",
                 "value": [
@@ -1692,11 +1829,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(0, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\minute",
                 "value": [
@@ -1710,14 +1847,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(5, $actual);
     }
 
     function testDatetimeDayOfWeek()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\dayOfWeek",
                 "value": [
@@ -1727,11 +1864,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(5, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\dayOfWeek",
                 "value": [
@@ -1741,11 +1878,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(0, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\dayOfWeek",
                 "value": [
@@ -1755,11 +1892,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(-1, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\dayOfWeek",
                 "value": [
@@ -1769,11 +1906,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(5, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\dayOfWeek",
                 "value": [
@@ -1787,14 +1924,42 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item);
+        '));
+        $actual = $this->createProcessor()->process($item);
+        $this->assertEquals(6, $actual);
+
+        $item = new Argument(json_decode('
+            {
+                "type": "datetime\\\\dayOfWeek",
+                "value": [
+                    {
+                        "type": "value",
+                        "value": "2020-05-15"
+                    }
+                ]
+            }
+        '));
+        $actual = $this->createProcessor()->process($item);
+        $this->assertEquals(5, $actual);
+
+        $item = new Argument(json_decode('
+            {
+                "type": "datetime\\\\dayOfWeek",
+                "value": [
+                    {
+                        "type": "value",
+                        "value": "2020-07-18 14:02:50"
+                    }
+                ]
+            }
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(6, $actual);
     }
 
     function testDatetimeDiff()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\diff",
                 "value": [
@@ -1812,11 +1977,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(-5, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\diff",
                 "value": [
@@ -1834,11 +1999,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(3, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\diff",
                 "value": [
@@ -1856,11 +2021,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(1, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\diff",
                 "value": [
@@ -1878,14 +2043,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(75, $actual);
     }
 
     function testDatetimeOperations()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addDays",
                 "value": [
@@ -1899,11 +2064,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-01-03', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addDays",
                 "value": [
@@ -1917,11 +2082,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-01-03 10:00:05', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addMonths",
                 "value": [
@@ -1935,11 +2100,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2016-12-01 10:00:05', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addWeeks",
                 "value": [
@@ -1953,11 +2118,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-01-08 10:00:05', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addYears",
                 "value": [
@@ -1971,11 +2136,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2018-01-01', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addHours",
                 "value": [
@@ -1989,11 +2154,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-01-01 02:00:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\addMinutes",
                 "value": [
@@ -2007,14 +2172,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-01-01 19:30:00', $actual);
     }
 
     function testDatetimeClosestTime()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2032,11 +2197,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 16:15', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2054,11 +2219,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-17 12:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2080,11 +2245,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-15 16:15', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2106,11 +2271,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-15 16:15', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2132,11 +2297,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 00:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2158,11 +2323,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-15 12:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2184,14 +2349,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 12:10', $actual);
     }
 
     function testDatetimeClosestHour()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2209,11 +2374,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-17 10:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2235,14 +2400,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 10:00', $actual);
     }
 
     function testDatetimeClosestMinute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2264,11 +2429,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 15:10', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2286,11 +2451,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 15:10', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2308,11 +2473,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 16:10', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2330,14 +2495,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-16 15:59', $actual);
     }
 
     function testDatetimeClosestDayOfWeek()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2355,11 +2520,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-20 00:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2381,11 +2546,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-13', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2403,14 +2568,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-19 00:00', $actual);
     }
 
     function testDatetimeClosestDate()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2428,11 +2593,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-30 00:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2454,11 +2619,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-10-31', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2476,14 +2641,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-12-01 00:00', $actual);
     }
 
     function testDatetimeClosestMonth()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2501,11 +2666,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2018-01-01', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2523,11 +2688,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-01', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2545,11 +2710,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2018-11-01 00:00', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "datetime\\\\closest",
                 "value": [
@@ -2571,14 +2736,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('2017-11-01', $actual);
     }
 
     function testList()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "list",
                 "value": [
@@ -2592,29 +2757,38 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(["Test", "Hello"], $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "list",
                 "value": []
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals([], $actual);
     }
 
     function testArrayIncludes()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "array\\\\includes",
                 "value": [
                     {
-                        "type": "value",
-                        "value": ["Test", "Hello"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "Test"
+                            },
+                            {
+                                "type": "value",
+                                "value": "Hello"
+                            }
+                        ]
                     },
                     {
                         "type": "value",
@@ -2622,11 +2796,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertTrue($actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "array\\\\includes",
                 "value": [
@@ -2640,17 +2814,26 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertFalse($actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "array\\\\includes",
                 "value": [
                     {
-                        "type": "value",
-                        "value": ["Test", "Hello"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "Test"
+                            },
+                            {
+                                "type": "value",
+                                "value": "Hello"
+                            }
+                        ]
                     },
                     {
                         "type": "value",
@@ -2658,20 +2841,29 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertFalse($actual);
     }
 
     function testArrayPush()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "array\\\\push",
                 "value": [
                     {
-                        "type": "value",
-                        "value": ["Test", "Hello"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "Test"
+                            },
+                            {
+                                "type": "value",
+                                "value": "Hello"
+                            }
+                        ]
                     },
                     {
                         "type": "value",
@@ -2683,31 +2875,40 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(['Test', 'Hello', '1', '2'], $actual);
     }
 
     function testArrayLength()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "array\\\\length",
                 "value": [
                     {
-                        "type": "value",
-                        "value": ["Test", "Hello"]
+                        "type": "list",
+                        "value": [
+                            {
+                                "type": "value",
+                                "value": "Test"
+                            },
+                            {
+                                "type": "value",
+                                "value": "Hello"
+                            }
+                        ]
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(2, $actual);
     }
 
     function testEnvUserAttribute()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "env\\\\userAttribute",
                 "value": [
@@ -2717,14 +2918,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('1', $actual);
     }
 
     function testTrim()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\trim",
                 "value": [
@@ -2734,14 +2935,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('test', $actual);
     }
 
     function testLowerCase()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\lowerCase",
                 "value": [
@@ -2751,14 +2952,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(' test ', $actual);
     }
 
     function testUpperCase()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\upperCase",
                 "value": [
@@ -2768,14 +2969,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('TEST', $actual);
     }
 
     function testSubstring()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\substring",
                 "value": [
@@ -2789,11 +2990,11 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('234', $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\substring",
                 "value": [
@@ -2811,14 +3012,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
-        $actual = $this->formula->process($item, $this->entity);
+        '));
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals('12', $actual);
     }
 
     function testPos()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\pos",
                 "value": [
@@ -2832,12 +3033,12 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $actual = $this->formula->process($item, $this->entity);
+        $actual = $this->createProcessor()->process($item);
         $this->assertEquals(1, $actual);
 
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "string\\\\pos",
                 "value": [
@@ -2851,15 +3052,15 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
-        $actual = $this->formula->process($item, $this->entity);
+        $actual = $this->createProcessor()->process($item);
         $this->assertFalse($actual);
     }
 
     function testBundle()
     {
-        $item = json_decode('
+        $item = new Argument(json_decode('
             {
                 "type": "bundle",
                 "value": [
@@ -2891,14 +3092,14 @@ class FormulaTest extends \PHPUnit\Framework\TestCase
                     }
                 ]
             }
-        ');
+        '));
 
         $variables = (object)[];
         $this->setEntityAttributes($this->entity, array(
             'test' => 'hello'
         ));
 
-        $this->formula->process($item, $this->entity, $variables);
+        $this->createProcessor($variables)->process($item);
 
         $this->assertEquals(5, $variables->counter);
         $this->assertEquals('hello', $variables->test);

@@ -29,7 +29,7 @@
 
 namespace Espo\Modules\Crm\SelectManagers;
 
-class Task extends \Espo\Core\SelectManagers\Base
+class Task extends \Espo\Core\Select\SelectManager
 {
     protected $selectAttributesDependancyMap = [
         'dateEnd' => ['status']
@@ -132,13 +132,14 @@ class Task extends \Espo\Core\SelectManagers\Base
         ]);
     }
 
-    public function transformDateTimeWhereItem(array $item) : ?array
+    public function transformDateTimeWhereItem(array $item) : array
     {
         $where = parent::transformDateTimeWhereItem($item);
 
         if (empty($where)) {
-            return null;
+            return [];
         }
+
         $attribute = null;
         if (!empty($item['attribute'])) {
             $attribute = $item['attribute'];
@@ -156,6 +157,7 @@ class Task extends \Espo\Core\SelectManagers\Base
         $attributeDate = $attribute . 'Date';
 
         $value = null;
+
         if (array_key_exists('value', $item)) {
             $value = $item['value'];
             if (is_string($value)) {

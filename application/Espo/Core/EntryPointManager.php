@@ -25,105 +25,75 @@
  *
  * In accordance with Section 7(b) of the GNU General Public License version 3,
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
- ************************************************************************/ 
+ ************************************************************************/
 
 namespace Espo\Core;
-use \Espo\Core\Exceptions\NotFound,
-    \Espo\Core\Utils\Util;
 
+use Espo\Core\Exceptions\NotFound;
 
+use Espo\Core\{
+    InjectableFactory,
+    Utils\ClassFinder,
+    Api\Request,
+    Api\Response,
+};
+
+use StdClass;
+
+/**
+ * Runs entry points.
+ */
 class EntryPointManager
 {
-    private $container;
+    protected $injectableFactory;
+    protected $classFinder;
 
-    private $fileManager;
-
-    protected $data = null;
-
-    protected $cacheFile = 'data/cache/application/entryPoints.php';
-
-    protected $allowedMethods = array(
-        'run',
-    );
-
-    /**
-     * @var array - path to entryPoint files
-     */
-    private $paths = array(
-        'corePath' => 'application/Espo/EntryPoints',
-        'modulePath' => 'application/Espo/Modules/{*}/EntryPoints',
-        'customPath' => 'custom/Espo/Custom/EntryPoints',
-    );
-
-
-    public function __construct(\Espo\Core\Container $container)
+    public function __construct(InjectableFactory $injectableFactory, ClassFinder $classFinder)
     {
-        $this->container = $container;
-        $this->fileManager = $container->get('fileManager');
+        $this->injectableFactory = $injectableFactory;
+        $this->classFinder = $classFinder;
     }
 
-    protected function getContainer()
-    {
-        return $this->container;
-    }
-
-    protected function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    public function checkAuthRequired($name)
+    public function checkAuthRequired(string $name) : bool
     {
         $className = $this->getClassName($name);
         if (!$className) {
-            throw new NotFound();
+            throw new NotFound("EntryPoint {$name} not found.");
         }
-        return $className::$authRequired;
+
+        if ($className::$noAuth ?? false) {
+            return false;
+        }
+
+        // for backward compatibility
+        return $className::$authRequired ?? true;
     }
 
-    public function checkNotStrictAuth($name)
+    public function checkNotStrictAuth(string $name) : bool
     {
         $className = $this->getClassName($name);
         if (!$className) {
-            throw new NotFound();
+            throw new NotFound("EntryPoint {$name} not found.");
         }
-        return $className::$notStrictAuth;
+
+        return $className::$notStrictAuth ?? false;
     }
 
-    public function run($name, $data = array())
+    public function run(string $name, Request $request, Response $response, ?StdClass $data = null)
     {
         $className = $this->getClassName($name);
         if (!$className) {
-            throw new NotFound();
+            throw new NotFound("EntryPoint {$name} not found.");
         }
-        $entryPoint = new $className($this->container);
 
-        $entryPoint->run($data);
+        $entryPoint = $this->injectableFactory->create($className);
+
+        $entryPoint->run($request, $response, $data);
     }
 
-    protected function getClassName($name)
+    protected function getClassName(string $name) : ?string
     {
-        $name = Util::normilizeClassName($name);
-
-        if (!isset($this->data)) {
-            $this->init();
-        }
-
         $name = ucfirst($name);
-        if (isset($this->data[$name])) {
-            return $this->data[$name];
-        }
-
-        return false;
+        return $this->classFinder->find('EntryPoints', $name);
     }
-
-
-    protected function init()
-    {
-        $classParser = $this->getContainer()->get('classParser');
-        $classParser->setAllowedMethods($this->allowedMethods);
-        $this->data = $classParser->getData($this->paths, $this->cacheFile);
-    }
-
 }
-

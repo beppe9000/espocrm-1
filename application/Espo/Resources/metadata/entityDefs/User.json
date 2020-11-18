@@ -1,10 +1,5 @@
 {
     "fields": {
-        "isAdmin": {
-            "type": "bool",
-            "tooltip": true,
-            "disabled": true
-        },
         "userName": {
             "type": "varchar",
             "maxLength": 50,
@@ -14,7 +9,10 @@
         },
         "name": {
             "type": "personName",
-            "view": "views/user/fields/name"
+            "view": "views/user/fields/name",
+            "dependeeAttributeList": [
+                "userName"
+            ]
         },
         "type": {
             "type": "enum",
@@ -90,15 +88,6 @@
             "tooltip": true,
             "default": true
         },
-        "isPortalUser": {
-            "type": "bool",
-            "disabled": true
-        },
-        "isSuperAdmin": {
-            "type": "bool",
-            "default": false,
-            "disabled": true
-        },
         "title": {
             "type": "varchar",
             "maxLength": 100,
@@ -111,31 +100,57 @@
             "where": {
                 "LIKE": {
                     "leftJoins": [["teams", "teamsPosition"]],
-                    "sql": "teamsPositionMiddle.role LIKE {value}",
+                    "whereClause": {
+                        "teamsPositionMiddle.role*": "{value}"
+                    },
+                    "distinct": true
+                },
+                "NOT LIKE": {
+                    "leftJoins": [["teams", "teamsPosition"]],
+                    "whereClause": {
+                        "teamsPositionMiddle.role!*": "{value}"
+                    },
                     "distinct": true
                 },
                 "=": {
                     "leftJoins": [["teams", "teamsPosition"]],
-                    "sql": "teamsPositionMiddle.role = {value}",
+                    "whereClause": {
+                        "teamsPositionMiddle.role": "{value}"
+                    },
                     "distinct": true
                 },
                 "<>": {
-                    "leftJoins": [["teams", "teamsPosition"]],
-                    "sql": "teamsPositionMiddle.role <> {value}",
-                    "distinct": true
+                    "whereClause": {
+                        "id!=s": {
+                            "from": "TeamUser",
+                            "select": ["userId"],
+                            "whereClause": {
+                                "deleted": 0,
+                                "role": "{value}"
+                            }
+                        }
+                    }
                 },
                 "IS NULL": {
                     "leftJoins": [["teams", "teamsPosition"]],
-                    "sql": "teamsPositionMiddle.role IS NULL",
+                    "whereClause": {
+                        "teamsPositionMiddle.role": null
+                    },
                     "distinct": true
                 },
                 "IS NOT NULL": {
                     "leftJoins": [["teams", "teamsPosition"]],
-                    "sql": "teamsPositionMiddle.role IS NOT NULL",
+                    "whereClause": {
+                        "teamsPositionMiddle.role!=": null
+                    },
                     "distinct": true
                 }
             },
+            "directUpdateDisabled": true,
             "trim": true,
+            "readOnly": true,
+            "importDisabled": true,
+            "exportDisabled": true,
             "layoutDetailDisabled": true,
             "layoutListDisabled": true,
             "textFilterDisabled": true
@@ -184,6 +199,7 @@
         "acceptanceStatusMeetings": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -194,6 +210,7 @@
         "acceptanceStatusCalls": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -246,6 +263,7 @@
         "account": {
             "type": "link",
             "notStorable": true,
+            "directAccessDisabled": true,
             "foreignAccessDisabled": true,
             "layoutDetailDisabled": true,
             "layoutListDisabled": true,
@@ -291,6 +309,17 @@
             "layoutDetailDisabled": true,
             "layoutListDisabled": true
         },
+        "auth2FA": {
+            "type": "foreign",
+            "link": "userData",
+            "field": "auth2FA",
+            "readOnly": true,
+            "view": "views/fields/foreign-bool"
+        },
+        "userData": {
+            "type": "linkOne",
+            "disabled": true
+        },
         "lastAccess": {
             "type": "datetime",
             "notStorable": true,
@@ -317,7 +346,10 @@
                     "len": 100
                 }
             },
-            "layoutRelationshipsDisabled": true
+            "layoutRelationshipsDisabled": true,
+            "columnAttributeMap": {
+                "role": "teamRole"
+            }
         },
         "createdBy": {
             "type": "belongsTo",
@@ -350,15 +382,27 @@
             "entity": "Preferences",
             "noJoin": true
         },
+        "userData": {
+            "type": "hasOne",
+            "entity": "UserData",
+            "foreign": "user",
+            "foreignName": "id"
+        },
         "meetings": {
             "type": "hasMany",
             "entity": "Meeting",
-            "foreign": "users"
+            "foreign": "users",
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "calls": {
             "type": "hasMany",
             "entity": "Call",
-            "foreign": "users"
+            "foreign": "users",
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "emails": {
             "type": "hasMany",

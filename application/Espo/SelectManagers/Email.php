@@ -29,7 +29,7 @@
 
 namespace Espo\SelectManagers;
 
-class Email extends \Espo\Core\SelectManagers\Base
+class Email extends \Espo\Core\Select\SelectManager
 {
     protected $textFilterUseContainsAttributeList = ['name'];
 
@@ -52,7 +52,7 @@ class Email extends \Espo\Core\SelectManagers\Base
 
         $textFilter = $params['textFilter'] ?? null;
 
-        if (!$textFilter && !empty($result['orderBy']) && $result['orderBy'] === 'dateSent') {
+        if (!$textFilter && $this->hasInOrderBy('dateSent', $params)) {
             $skipIndex = false;
             if (isset($params['where'])) {
                 foreach ($params['where'] as $item) {
@@ -75,7 +75,7 @@ class Email extends \Espo\Core\SelectManagers\Base
                 $skipIndex = true;
             }
 
-            $actualDatabaseType = $this->getConfig()->get('actualDatabaseType');
+            /*$actualDatabaseType = strtolower($this->getConfig()->get('actualDatabaseType'));
             $actualDatabaseVersion = $this->getConfig()->get('actualDatabaseVersion');
 
             if (
@@ -84,7 +84,12 @@ class Email extends \Espo\Core\SelectManagers\Base
                 $this->hasLinkJoined('teams', $result)
             ) {
                 $skipIndex = true;
+            }*/
+
+            if ($this->hasLinkJoined('teams', $result)) {
+                $skipIndex = true;
             }
+
             if (!$skipIndex) {
                 $result['useIndex'] = 'dateSent';
             }
@@ -157,8 +162,6 @@ class Email extends \Espo\Core\SelectManagers\Base
         $result['whereClause'][] = [
             'usersMiddle.userId' => $this->getUser()->id
         ];
-
-        $this->addUsersColumns($result);
     }
 
     protected function boolFilterOnlyMy(&$result)
@@ -173,40 +176,60 @@ class Email extends \Espo\Core\SelectManagers\Base
 
     protected function addUsersColumns(&$result)
     {
-        if (!isset($result['select'])) {
-            $result['additionalSelectColumns']['usersMiddle.is_read'] = 'isRead';
-            $result['additionalSelectColumns']['usersMiddle.is_important'] = 'isImportant';
-            $result['additionalSelectColumns']['usersMiddle.in_trash'] = 'inTrash';
-            $result['additionalSelectColumns']['usersMiddle.folder_id'] = 'folderId';
+        $result['select'] = $result['select'] ?? [];
+
+        if (!count($result['select'])) {
+            $result['select'][] = '*';
+        }
+
+        $itemList = [
+            'isRead',
+            'isImportant',
+            'inTrash',
+            'folderId',
+        ];
+
+        foreach ($itemList as $item) {
+            $result['select'][] = [
+                'usersMiddle.' . $item,
+                $item,
+            ];
         }
     }
 
     protected function filterInbox(&$result)
     {
-        $eaList = $this->getUser()->get('emailAddresses');
+        $eaList = $this->getEntityManager()
+            ->getRepository('User')
+            ->getRelation($this->getUser(), 'emailAddresses')
+            ->find();
+
         $idList = [];
+
         foreach ($eaList as $ea) {
             $idList[] = $ea->id;
         }
+
         $group = [
             'usersMiddle.inTrash=' => false,
             'usersMiddle.folderId' => null,
             [
-                'status' => ['Archived', 'Sent']
+                'status' => ['Archived', 'Sent'],
             ]
         ];
+
         if (!empty($idList)) {
             $group['fromEmailAddressId!='] = $idList;
             $group[] = [
                 'OR' => [
                     'status' => 'Archived',
-                    'createdById!=' => $this->getUser()->id
+                    'createdById!=' => $this->getUser()->id,
                 ]
             ];
         } else {
             $group[] = [
                 'status' => 'Archived',
-                'createdById!=' => $this->getUser()->id
+                'createdById!=' => $this->getUser()->id,
             ];
         }
         $result['whereClause'][] = $group;
@@ -222,7 +245,11 @@ class Email extends \Espo\Core\SelectManagers\Base
 
     protected function filterSent(&$result)
     {
-        $eaList = $this->getUser()->get('emailAddresses');
+        $eaList = $this->getEntityManager()
+            ->getRepository('User')
+            ->getRelation($this->getUser(), 'emailAddresses')
+            ->find();
+
         $idList = [];
         foreach ($eaList as $ea) {
             $idList[] = $ea->id;

@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
+define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
 
     return Dep.extend({
 
@@ -213,6 +213,11 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                         paramName: 'q',
                         noCache: true,
                         triggerSelectOnValidInput: false,
+                        beforeRender: function ($c) {
+                            if (this.$element.hasClass('input-sm')) {
+                                $c.addClass('small');
+                            }
+                        }.bind(this),
                         formatResult: function (suggestion) {
                             return this.getHelper().escapeString(suggestion.name);
                         }.bind(this),
@@ -267,6 +272,10 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                 if (this.mode == 'search') {
                     var type = this.$el.find('select.search-type').val();
                     this.handleSearchType(type);
+
+                    this.$el.find('select.search-type').on('change', function () {
+                        this.trigger('change');
+                    }.bind(this));
                 }
             }
         },
@@ -278,6 +287,9 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
         },
 
         deleteLink: function (id) {
+            this.trigger('delete-link', id);
+            this.trigger('delete-link:' + id);
+
             this.deleteLinkHtml(id);
 
             var index = this.ids.indexOf(id);
@@ -286,7 +298,9 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                 this.ids.splice(index, 1);
             }
             delete this.nameHash[id];
+
             this.afterDeleteLink(id);
+
             this.trigger('change');
         },
 
@@ -296,6 +310,9 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                 this.nameHash[id] = name;
                 this.addLinkHtml(id, name);
                 this.afterAddLink(id);
+
+                this.trigger('add-link', id);
+                this.trigger('add-link:' + id);
             }
             this.trigger('change');
         },
@@ -386,10 +403,10 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                 var data = {
                     type: 'linkedWith',
                     value: idList,
-                    nameHash: this.nameHash,
                     data: {
-                        type: type
-                    }
+                        type: type,
+                        nameHash: this.nameHash,
+                    },
                 };
                 if (!idList.length) {
                     data.value = null;
@@ -401,26 +418,26 @@ Espo.define('views/fields/link-multiple', 'views/fields/base', function (Dep) {
                 var data = {
                     type: 'notLinkedWith',
                     value: this.ids || [],
-                    nameHash: this.nameHash,
                     data: {
-                        type: type
-                    }
+                        type: type,
+                        nameHash: this.nameHash,
+                    },
                 };
                 return data;
             } else if (type === 'isEmpty') {
                 var data = {
                     type: 'isNotLinked',
                     data: {
-                        type: type
-                    }
+                        type: type,
+                    },
                 };
                 return data;
             } else if (type === 'isNotEmpty') {
                 var data = {
                     type: 'isLinked',
                     data: {
-                        type: type
-                    }
+                        type: type,
+                    },
                 };
                 return data;
             }

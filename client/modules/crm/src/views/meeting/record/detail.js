@@ -26,16 +26,23 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('crm:views/meeting/record/detail', 'views/record/detail', function (Dep) {
+define('crm:views/meeting/record/detail', 'views/record/detail', function (Dep) {
 
     return Dep.extend({
 
         duplicateAction: true,
 
+        setup: function () {
+            Dep.prototype.setup.call(this);
+        },
+
         setupActionItems: function () {
             Dep.prototype.setupActionItems.call(this);
             if (this.getAcl().checkModel(this.model, 'edit')) {
-                if (['Held', 'Not Held'].indexOf(this.model.get('status')) == -1) {
+                if (
+                    ['Held', 'Not Held'].indexOf(this.model.get('status')) == -1 &&
+                    this.getAcl().checkField(this.entityType, 'status', 'edit')
+                ) {
                     this.dropdownItemList.push({
                         'label': 'Set Held',
                         'name': 'setHeld'

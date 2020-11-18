@@ -17,15 +17,18 @@
         "timeZone": "Time Zone",
         "weekStart": "First Day of Week",
         "defaultCurrency": "Default Currency",
+        "layoutSet": "Layout Set",
         "customUrl": "Custom URL",
         "customId": "Custom ID"
     },
     "links": {
         "users": "Users",
         "portalRoles": "Roles",
+        "layoutSet": "Layout Set",
         "notes": "Notes"
     },
     "tooltips": {
+        "layoutSet": "Provides the ability to have layouts that differ from standard ones.",
         "portalRoles": "Specified Portal Roles will be applied to all users of this portal."
     },
     "labels": {

@@ -40,6 +40,8 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
 
         fieldsMode: 'detail',
 
+        mode: 'detail',
+
         gridLayout: null,
 
         detailLayout: null,
@@ -120,10 +122,15 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
 
         saveAndContinueEditingAction: false,
 
+        panelSoftLockedTypeList: ['default', 'acl', 'delimiter', 'dynamicLogic'],
+
         events: {
             'click .button-container .action': function (e) {
                 Espo.Utils.handleAction(this, e);
-            }
+            },
+            'click [data-action="showMoreDetailPanels"]': function () {
+                this.showMoreDetailPanels();
+            },
         },
 
         actionEdit: function () {
@@ -239,6 +246,8 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                     this.getAcl().check(this.entityType, 'edit')
                     &&
                     !~this.getAcl().getScopeForbiddenFieldList(this.entityType).indexOf('assignedUser')
+                    &&
+                    !this.getUser().isPortal()
                 ) {
                     if (this.model.has('assignedUserId')) {
                         this.dropdownItemList.push({
@@ -293,7 +302,7 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
             }
 
             if (this.type === 'detail' && this.getMetadata().get(['scopes', this.scope, 'hasPersonalData'])) {
-                if (this.getAcl().get('dataPrivacyPermission') !== 'no') {
+                if (this.getAcl().get('dataPrivacyPermission') == 'yes') {
                     this.dropdownItemList.push({
                         'label': 'View Personal Data',
                         'name': 'viewPersonalData'
@@ -420,7 +429,22 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
             }
         },
 
-        showPanel: function (name) {
+        showPanel: function (name, softLockedType) {
+            if (this.recordHelper.getPanelStateParam(name, 'hiddenLocked')) return;
+
+            softLockedType = softLockedType || 'default';
+
+            this.recordHelper.setPanelStateParam(
+                name, 'hidden' + Espo.Utils.upperCaseFirst(softLockedType) + 'Locked', false
+            );
+
+            for (var i = 0; i < this.panelSoftLockedTypeList.length; i++) {
+                var iType = this.panelSoftLockedTypeList[i];
+                if (iType === softLockedType) continue;
+                var iParam = 'hidden' +  Espo.Utils.upperCaseFirst(iType) + 'Locked';
+                if (this.recordHelper.getPanelStateParam(name, iParam)) return;
+            }
+
             this.recordHelper.setPanelStateParam(name, 'hidden', false);
 
             var middleView = this.getView('middle');
@@ -433,6 +457,13 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 if ('showPanel' in bottomView) {
                     bottomView.showPanel(name);
                 }
+            } else if (this.bottomView) {
+                this.once('after:render', function () {
+                    var bottomView = this.getView('bottom');
+                    if (bottomView && 'showPanel' in bottomView) {
+                        bottomView.showPanel(name);
+                    }
+                }, this);
             }
 
             var sideView = this.getView('side');
@@ -440,11 +471,30 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 if ('showPanel' in sideView) {
                     sideView.showPanel(name);
                 }
+            } else if (this.sideView) {
+                this.once('after:render', function () {
+                    var sideView = this.getView('side');
+                    if (sideView && 'showPanel' in sideView) {
+                        sideView.showPanel(name);
+                    }
+                }, this);
             }
         },
 
-        hidePanel: function (name) {
+        hidePanel: function (name, locked, softLockedType) {
             this.recordHelper.setPanelStateParam(name, 'hidden', true);
+
+            softLockedType = softLockedType || 'default';
+
+            if (locked) {
+                this.recordHelper.setPanelStateParam(name, 'hiddenLocked', true);
+            }
+
+            if (softLockedType) {
+                this.recordHelper.setPanelStateParam(
+                    name, 'hidden' + Espo.Utils.upperCaseFirst(softLockedType) + 'Locked', true
+                );
+            }
 
             var middleView = this.getView('middle');
             if (middleView) {
@@ -456,6 +506,13 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 if ('hidePanel' in bottomView) {
                     bottomView.hidePanel(name);
                 }
+            } else if (this.bottomView) {
+                this.once('after:render', function () {
+                    var bottomView = this.getView('bottom');
+                    if (bottomView && 'showPanel' in bottomView) {
+                        bottomView.hidePanel(name);
+                    }
+                }, this);
             }
 
             var sideView = this.getView('side');
@@ -463,6 +520,13 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 if ('hidePanel' in sideView) {
                     sideView.hidePanel(name);
                 }
+            } else if (this.sideView) {
+                this.once('after:render', function () {
+                    var sideView = this.getView('side');
+                    if (sideView && 'hidePanel' in sideView) {
+                        sideView.hidePanel(name);
+                    }
+                }, this);
             }
         },
 
@@ -490,6 +554,11 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 this.listenTo(fieldView, 'inline-edit-off', function () {
                     this.inlineEditModeIsOn = false;
                     this.setIsNotChanged();
+                }, this);
+                this.listenTo(fieldView, 'after:inline-edit-off', function () {
+                    if (this.updatedAttributes) {
+                        this.resetModelChanges();
+                    }
                 }, this);
             }
         },
@@ -624,6 +693,13 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
         },
 
         resetModelChanges: function () {
+            var skipReRender = true;
+            if (this.updatedAttributes) {
+                this.attributes = this.updatedAttributes;
+                this.updatedAttributes = null;
+                skipReRender = false;
+            }
+
             var attributes = this.model.attributes;
             for (var attr in attributes) {
                 if (!(attr in this.attributes)) {
@@ -631,12 +707,12 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 }
             }
 
-            this.model.set(this.attributes, {skipReRender: true});
+            this.model.set(this.attributes, {skipReRender: skipReRender});
         },
 
         delete: function () {
             this.confirm({
-                message: this.translate('removeRecordConfirmation', 'messages'),
+                message: this.translate('removeRecordConfirmation', 'messages', this.scope),
                 confirmText: this.translate('Remove')
             }, function () {
                 this.trigger('before:delete');
@@ -886,6 +962,20 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                 this.$detailButtonContainer = this.$el.find('.detail-button-container');
                 this.$dropdownItemListButton = this.$detailButtonContainer.find('.dropdown-item-list-button');
             }, this);
+
+            if (
+                !this.isNew &&
+                this.getConfig().get('useWebSocket') &&
+                this.getMetadata().get(['scopes', this.entityType, 'object'])
+            ) {
+                this.subscribeToWebSocket();
+
+                this.once('remove', function () {
+                    if (this.isSubscribedToWebSocked) {
+                        this.unsubscribeFromWebSocket();
+                    }
+                }.bind(this));
+            }
         },
 
         setupBeforeFinal: function () {
@@ -1157,10 +1247,15 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
             }
             this.enableButtons();
             this.setIsNotChanged();
+
+            setTimeout(function () {
+                this.unblockUpdateWebSocket();
+            }.bind(this), this.blockUpdateWebSocketPeriod || 500);
         },
 
         beforeSave: function () {
             this.notify('Saving...');
+            this.blockUpdateWebSocket();
         },
 
         beforeBeforeSave: function () {
@@ -1187,6 +1282,7 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
             this.createView('duplicate', 'views/modals/duplicate', {
                 scope: this.entityType,
                 duplicates: duplicates,
+                model: this.model,
             }, function (view) {
                 view.render();
 
@@ -1390,12 +1486,23 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
 
             var el = this.options.el || '#' + (this.id);
 
+            this.panelFieldListMap = {};
+
             for (var p in simplifiedLayout) {
                 var panel = {};
-                panel.label = simplifiedLayout[p].label || null;
+
                 if ('customLabel' in simplifiedLayout[p]) {
-                    panel.customLabel = simplifiedLayout[p].customLabel;
+                    panel.label = simplifiedLayout[p].customLabel;
+                    if (panel.label) {
+                        panel.label = this.getLanguage().translate(panel.label, 'panelCustomLabels', this.entityType);
+                    }
+                } else {
+                    panel.label = simplifiedLayout[p].label || null;
+                    if (panel.label) {
+                        panel.label = this.getLanguage().translate(panel.label, 'labels', this.entityType);
+                    }
                 }
+
                 panel.name = simplifiedLayout[p].name || null;
                 panel.style = simplifiedLayout[p].style || 'default';
                 panel.rows = [];
@@ -1409,12 +1516,23 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                     }
                 }
 
+                if (simplifiedLayout[p].hidden) {
+                    panel.hidden = true;
+                    panel.name = panel.name || 'panel-' + p.toString();
+                    this.hidePanel(panel.name);
+                    this.underShowMoreDetailPanelList = this.underShowMoreDetailPanelList || [];
+                    this.underShowMoreDetailPanelList.push(panel.name);
+                }
+
                 var lType = 'rows';
                 if (simplifiedLayout[p].columns) {
                     lType = 'columns';
                     panel.columns = [];
                 }
 
+                if (panel.name) {
+                    this.panelFieldListMap[panel.name] = [];
+                }
 
                 for (var i in simplifiedLayout[p][lType]) {
                     var row = [];
@@ -1432,6 +1550,10 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                         }
 
                         var name = cellDefs.name;
+
+                        if (panel.name) {
+                            this.panelFieldListMap[panel.name].push(name);
+                        }
 
                         var type = cellDefs.type || this.model.getFieldType(name) || 'base';
                         var viewName = cellDefs.view || this.model.getFieldParam(name, 'view') || this.getFieldManager().getViewName(type);
@@ -1504,6 +1626,9 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                         }
                         if ('customLabel' in cellDefs) {
                             cell.customLabel = cellDefs.customLabel;
+                        }
+                        if ('label' in cellDefs) {
+                            cell.label = cellDefs.label;
                         }
                         if ('customCode' in cellDefs) {
                             cell.customCode = cellDefs.customCode;
@@ -1583,7 +1708,8 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
                         model: this.model,
                     },
                     recordHelper: this.recordHelper,
-                    recordViewObject: this
+                    recordViewObject: this,
+                    panelFieldListMap: this.panelFieldListMap,
                 }, callback);
             }.bind(this));
         },
@@ -1688,6 +1814,60 @@ define('views/record/detail', ['views/record/base', 'view-record-helper'], funct
             }
 
             this.getRouter().navigate(url, {trigger: true});
+        },
+
+        subscribeToWebSocket: function () {
+            var topic = 'recordUpdate.' + this.entityType + '.' + this.model.id;
+            this.recordUpdateWebSocketTopic = topic;
+
+            this.isSubscribedToWebSocked = true;
+
+            this.getHelper().webSocketManager.subscribe(topic, function (t, data) {
+                this.handleRecordUpdate();
+            }.bind(this))
+        },
+
+        unsubscribeFromWebSocket: function () {
+            if (!this.isSubscribedToWebSocked) return;
+            this.getHelper().webSocketManager.unsubscribe(this.recordUpdateWebSocketTopic);
+        },
+
+        handleRecordUpdate: function () {
+            if (this.updateWebSocketIsBlocked) return;
+
+            if (this.inlineEditModeIsOn || this.mode == 'edit') {
+                var m = this.model.clone();
+                m.fetch().then(
+                    function () {
+                        if (this.inlineEditModeIsOn || this.mode == 'edit') {
+                            this.updatedAttributes = Espo.Utils.cloneDeep(m.attributes);
+                        }
+                    }.bind(this)
+                );
+            } else {
+                this.model.fetch({highlight: true});
+            }
+        },
+
+        blockUpdateWebSocket: function (toUnblock) {
+            this.updateWebSocketIsBlocked = true;
+
+            if (toUnblock) {
+                setTimeout(function () {
+                    this.unblockUpdateWebSocket();
+                }.bind(this), this.blockUpdateWebSocketPeriod || 500);
+            }
+        },
+
+        unblockUpdateWebSocket: function () {
+            this.updateWebSocketIsBlocked = false;
+        },
+
+        showMoreDetailPanels: function () {
+            this.hidePanel('showMoreDelimiter');
+            this.underShowMoreDetailPanelList.forEach(function (item) {
+                this.showPanel(item)
+            }, this);
         },
 
     });

@@ -29,8 +29,15 @@
 
 namespace Espo\Modules\Crm\SelectManagers;
 
-class Meeting extends \Espo\Core\SelectManagers\Base
+class Meeting extends \Espo\Core\Select\SelectManager
 {
+    protected $selectAttributesDependancyMap = [
+        'duration' => [
+            'dateStart',
+            'dateEnd',
+        ],
+    ];
+
     protected function accessOnlyOwn(&$result)
     {
         $this->setDistinct(true, $result);
@@ -72,34 +79,35 @@ class Meeting extends \Espo\Core\SelectManagers\Base
 
     protected function filterPlanned(&$result)
     {
-        $result['whereClause'][] = array(
+        $result['whereClause'][] = [
         	'status' => 'Planned'
-        );
+        ];
     }
 
     protected function filterHeld(&$result)
     {
-        $result['whereClause'][] = array(
+        $result['whereClause'][] = [
         	'status' => 'Held'
-        );
+        ];
     }
 
     protected function filterTodays(&$result)
     {
-        $result['whereClause'][] = $this->convertDateTimeWhere(array(
+        $result['whereClause'][] = $this->convertDateTimeWhere([
         	'type' => 'today',
         	'attribute' => 'dateStart',
         	'timeZone' => $this->getUserTimeZone()
-        ));
+        ]);
     }
 
-    public function transformDateTimeWhereItem(array $item) : ?array
+    public function transformDateTimeWhereItem(array $item) : array
     {
         $where = parent::transformDateTimeWhereItem($item);
 
         if (empty($where)) {
-            return null;
+            return [];
         }
+
         $attribute = null;
         if (!empty($item['attribute'])) {
             $attribute = $item['attribute'];

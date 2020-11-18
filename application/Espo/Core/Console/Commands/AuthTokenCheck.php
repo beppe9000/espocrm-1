@@ -29,27 +29,58 @@
 
 namespace Espo\Core\Console\Commands;
 
-class AuthTokenCheck extends Base
+use Espo\Core\{
+    ORM\EntityManager,
+    Authentication\AuthToken\AuthTokenManager,
+};
+
+class AuthTokenCheck implements Command
 {
-    public function run($options, $flagList, $argumentList)
+    protected $entityManager;
+    protected $authTokenManager;
+
+    public function __construct(EntityManager $entityManager, AuthTokenManager $authTokenManager)
+    {
+        $this->entityManager = $entityManager;
+        $this->authTokenManager = $authTokenManager;
+    }
+
+    public function run(array $options, array $flagList, array $argumentList) : ?string
     {
         $token = $argumentList[0] ?? null;
-        if (empty($token)) return;
 
-        $entityManager = $this->getContainer()->get('entityManager');
+        if (empty($token)) {
+            return null;
+        }
 
-        $authToken = $entityManager->getRepository('AuthToken')->where([
-            'token' => $token,
-            'isActive' => true,
-        ])->findOne();
+        $authToken = $this->authTokenManager->get($token);
 
-        if (!$authToken) return;
-        if (!$authToken->get('userId')) return;
+        if (!$authToken) {
+            return null;
+        }
 
-        $userId = $authToken->get('userId');
+        if (!$authToken->isActive()) {
+            return null;
+        }
 
-        $user = $entityManager->getEntity('User', $userId);
-        if (!$user) return;
+        if (!$authToken->getUserId()) {
+            return null;
+        }
+
+        $userId = $authToken->getUserId();
+
+        $user = $this->entityManager
+            ->getRepository('User')
+            ->select('id')
+            ->where([
+                'id' => $userId,
+                'isActive' => true,
+            ])
+            ->findOne();
+
+        if (!$user) {
+            return null;
+        }
 
         return $user->id;
     }

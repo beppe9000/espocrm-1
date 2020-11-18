@@ -59,8 +59,9 @@ define('controllers/admin', ['controller', 'search-manager'], function (Dep, Sea
         actionLayouts: function (options) {
             var scope = options.scope || null;
             var type = options.type || null;
+            var em = options.em || false;
 
-            this.main('views/admin/layouts/index', {scope: scope, type: type});
+            this.main('views/admin/layouts/index', {scope: scope, type: type, em: em});
         },
 
         actionLabelManager: function (options) {
@@ -86,7 +87,13 @@ define('controllers/admin', ['controller', 'search-manager'], function (Dep, Sea
         actionEntityManager: function (options) {
             var scope = options.scope || null;
 
-            this.main('views/admin/entity-manager/index', {scope: scope});
+            if (scope) {
+                this.main('views/admin/entity-manager/scope', {scope: scope});
+
+                return;
+            }
+
+            this.main('views/admin/entity-manager/index');
         },
 
         actionLinkManager: function (options) {

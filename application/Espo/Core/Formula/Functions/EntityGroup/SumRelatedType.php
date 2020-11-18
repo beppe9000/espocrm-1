@@ -29,29 +29,23 @@
 
 namespace Espo\Core\Formula\Functions\EntityGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Error;
 
-class SumRelatedType extends \Espo\Core\Formula\Functions\Base
+use Espo\ORM\QueryParams\Select;
+
+use Espo\Core\Di;
+
+class SumRelatedType extends \Espo\Core\Formula\Functions\Base implements
+    Di\EntityManagerAware,
+    Di\SelectManagerFactoryAware
 {
-    protected function init()
-    {
-        $this->addDependency('entityManager');
-        $this->addDependency('selectManagerFactory');
-    }
+    use Di\EntityManagerSetter;
+    use Di\SelectManagerFactorySetter;
 
     public function process(\StdClass $item)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
         if (count($item->value) < 2) {
-            throw new Error();
+            throw new Error("sumRelated: Too few arguments.");
         }
 
         $link = $this->evaluate($item->value[0]);
@@ -73,7 +67,7 @@ class SumRelatedType extends \Espo\Core\Formula\Functions\Base
 
         $entity = $this->getEntity();
 
-        $entityManager = $this->getInjection('entityManager');
+        $entityManager = $this->entityManager;
 
         $foreignEntityType = $entity->getRelationParam($link, 'entity');
 
@@ -81,7 +75,7 @@ class SumRelatedType extends \Espo\Core\Formula\Functions\Base
             throw new Error();
         }
 
-        $foreignSelectManager = $this->getInjection('selectManagerFactory')->create($foreignEntityType);
+        $foreignSelectManager = $this->selectManagerFactory->create($foreignEntityType);
 
         $foreignLink = $entity->getRelationParam($link, 'foreign');
         $foreignLinkAlias = $foreignLink . 'SumRelated';
@@ -140,9 +134,7 @@ class SumRelatedType extends \Espo\Core\Formula\Functions\Base
 
         $selectParams['groupBy'] = [$foreignLinkAlias . '.id'];
 
-        $entityManager->getRepository($foreignEntityType)->handleSelectParams($selectParams);
-
-        $sql = $entityManager->getQuery()->createSelectQuery($foreignEntityType, $selectParams);
+        $sql = $entityManager->getQueryComposer()->compose(Select::fromRaw($selectParams));
 
         $pdo = $entityManager->getPDO();
         $sth = $pdo->prepare($sql);

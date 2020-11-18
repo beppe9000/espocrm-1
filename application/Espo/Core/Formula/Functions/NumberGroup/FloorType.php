@@ -29,26 +29,20 @@
 
 namespace Espo\Core\Formula\Functions\NumberGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class FloorType extends \Espo\Core\Formula\Functions\Base
+class FloorType extends BaseFunction
 {
-
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return true;
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 1) {
-             throw new Error();
-        }
-
-        $value = $this->evaluate($item->value[0]);
+        $value = $this->evaluate($args[0]);
 
         if (!is_numeric($value)) {
             return null;

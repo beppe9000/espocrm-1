@@ -29,29 +29,35 @@
 
 namespace Espo\Core\Templates\SelectManagers;
 
-class Event extends \Espo\Core\SelectManagers\Base
+class Event extends \Espo\Core\Select\SelectManager
 {
+    protected $selectAttributesDependancyMap = [
+        'duration' => [
+            'dateStart',
+            'dateEnd',
+        ],
+    ];
+
     protected function filterPlanned(&$result)
     {
-        $result['whereClause'][] = array(
+        $result['whereClause'][] = [
             'status' => 'Planned'
-        );
+        ];
     }
 
     protected function filterHeld(&$result)
     {
-        $result['whereClause'][] = array(
+        $result['whereClause'][] = [
             'status' => 'Held'
-        );
+        ];
     }
 
     protected function filterTodays(&$result)
     {
-        $result['whereClause'][] = $this->convertDateTimeWhere(array(
+        $result['whereClause'][] = $this->convertDateTimeWhere([
             'type' => 'today',
             'attribute' => 'dateStart',
-            'timeZone' => $this->getUserTimeZone()
-        ));
+            'timeZone' => $this->getUserTimeZone(),
+        ]);
     }
 }
-

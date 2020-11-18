@@ -1047,25 +1047,27 @@ class UtilTest extends \PHPUnit\Framework\TestCase
        $this->assertEquals('\Espo\Core\Utils', Util::toFormat('/Espo/Core/Utils', '\\'));
 
        $this->assertEquals('/Espo/Core/Utils', Util::toFormat('\Espo\Core\Utils', '/'));
-       $this->assertEquals('\Espo\Core\Utils', Util::toFormat('\Espo\Core\Utils', '\\'));
+       $this->assertEquals('Espo\Core\Utils', Util::toFormat('Espo\Core\Utils', '\\'));
     }
 
     public function testConcatPath()
     {
         $result= Util::fixPath('dir1/dir2/file1.json');
-        $this->assertEquals($result, Util::concatPath('dir1/dir2', 'file1.json'));
+        $this->assertEquals($result, Util::concatPath(Util::fixPath('dir1/dir2'), 'file1.json'));
 
         $result= Util::fixPath('dir1/dir2/file1.json');
-        $this->assertEquals($result, Util::concatPath('dir1/dir2/', 'file1.json'));
+        $this->assertEquals($result, Util::concatPath(Util::fixPath('dir1/dir2/'), 'file1.json'));
 
         $result= Util::fixPath('dir1/dir2/file1.json');
-        $this->assertEquals($result, Util::concatPath('dir1/dir2/file1.json'));
+        $this->assertEquals($result, Util::concatPath(Util::fixPath('dir1/dir2/file1.json')));
 
         $input = array('dir1/dir2', 'file1.json');
-        $result= Util::fixPath('dir1/dir2/file1.json');
+        $input = array_map('\Espo\Core\Utils\Util::fixPath', $input);
+        $result = Util::fixPath('dir1/dir2/file1.json');
         $this->assertEquals($result, Util::concatPath($input));
 
         $input = array('dir1/', 'dir2', 'file1.json');
+        $input = array_map('\Espo\Core\Utils\Util::fixPath', $input);
         $result = Util::fixPath('dir1/dir2/file1.json');
         $this->assertEquals($result, Util::concatPath($input));
     }
@@ -1155,7 +1157,7 @@ class UtilTest extends \PHPUnit\Framework\TestCase
     /**
      * @dataProvider dp_classNames
      */
-    public function testGetClassName($path, $expectedClassName = '\Espo\EntryPoints\Donwload')
+    public function testGetClassName($path, $expectedClassName = 'Espo\EntryPoints\Donwload')
     {
         $this->assertEquals($expectedClassName, Util::getClassName($path));
     }

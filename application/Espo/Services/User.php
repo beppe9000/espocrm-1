@@ -29,75 +29,44 @@
 
 namespace Espo\Services;
 
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
 use Espo\Core\Utils\Util;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-class User extends Record
+use Espo\Core\Utils\PasswordHash;
+
+use StdClass;
+
+use Espo\Core\Di;
+
+class User extends Record implements
+
+    Di\TemplateFileManagerAware,
+    Di\EmailSenderAware,
+    Di\HtmlizerFactoryAware,
+    Di\FileManagerAware,
+    Di\DataManagerAware
 {
-    const PASSWORD_CHANGE_REQUEST_LIFETIME = 360; // minutes
-
-    protected function init()
-    {
-        parent::init();
-
-        $this->addDependency('container');
-    }
+    use Di\TemplateFileManagerSetter;
+    use Di\EmailSenderSetter;
+    use Di\HtmlizerFactorySetter;
+    use Di\FileManagerSetter;
+    use Di\DataManagerSetter;
 
     protected $mandatorySelectAttributeList = [
-        'isPortalUser',
         'isActive',
         'userName',
-        'isAdmin',
-        'type'
-    ];
-
-    protected $linkSelectParams = [
-        'targetLists' => [
-            'additionalColumns' => [
-                'optedOut' => 'isOptedOut'
-            ]
-        ]
+        'type',
     ];
 
     protected $validateSkipFieldList = ['name', "firstName", "lastName"];
 
     protected $allowedUserTypeList = ['regular', 'admin', 'portal', 'api'];
 
-    protected function getMailSender()
-    {
-        return $this->getContainer()->get('mailSender');
-    }
-
-    protected function getLanguage()
-    {
-        return $this->getContainer()->get('language');
-    }
-
-    protected function getFileManager()
-    {
-        return $this->getContainer()->get('fileManager');
-    }
-
-    protected function getNumber()
-    {
-        return $this->getContainer()->get('number');
-    }
-
-    protected function getDateTime()
-    {
-        return $this->getContainer()->get('dateTime');
-    }
-
-    protected function getContainer()
-    {
-        return $this->injections['container'];
-    }
-
-    public function getEntity($id = null)
+    public function getEntity(?string $id = null) : Entity
     {
         if (isset($id) && $id == 'system') {
             throw new Forbidden();
@@ -113,8 +82,9 @@ class User extends Record
         return $entity;
     }
 
-    public function changePassword($userId, $password, $checkCurrentPassword = false, $currentPassword = null)
-    {
+    public function changePassword(
+        string $userId, string $password, bool $checkCurrentPassword = false, ?string $currentPassword = null
+    ) {
         $user = $this->getEntityManager()->getEntity('User', $userId);
         if (!$user) {
             throw new NotFound();
@@ -133,17 +103,24 @@ class User extends Record
         }
 
         if ($checkCurrentPassword) {
-            $passwordHash = new \Espo\Core\Utils\PasswordHash($this->getConfig());
-            $u = $this->getEntityManager()->getRepository('User')->where([
-                'id' => $user->id,
-                'password' => $passwordHash->hash($currentPassword)
-            ])->findOne();
+            $passwordHash = new PasswordHash($this->getConfig());
+
+            $u = $this->getEntityManager()
+                ->getRepository('User')
+                ->where([
+                    'id' => $user->id,
+                    'password' => $passwordHash->hash($currentPassword),
+                ])
+                ->findOne();
+
             if (!$u) {
-                throw new Forbidden();
+                throw new Forbidden("Wrong password.");
             }
         }
 
-        if (!$this->checkPasswordStrength($password)) throw new Forbidden("Change password: Password is weak.");
+        if (!$this->checkPasswordStrength($password)) {
+            throw new Forbidden("Change password: Password is weak.");
+        }
 
         $user->set('password', $this->hashPassword($password));
 
@@ -209,81 +186,28 @@ class User extends Record
 
     public function passwordChangeRequest($userName, $emailAddress, $url = null)
     {
-        if ($this->getConfig()->get('passwordRecoveryDisabled')) {
-            throw new Forbidden("Password recovery disabled");
-        }
-
-        $user = $this->getEntityManager()->getRepository('User')->where([
-            'userName' => $userName,
-            'emailAddress' => $emailAddress
-        ])->findOne();
-
-        if (empty($user)) {
-            throw new NotFound();
-        }
-
-        if (!$user->isActive()) {
-            throw new NotFound();
-        }
-
-        if ($user->isApi()) {
-            throw new NotFound();
-        }
-
-        if ($this->getConfig()->get('passwordRecoveryForAdminDisabled')) {
-            if ($user->isAdmin()) {
-                throw new NotFound();
-            }
-        }
-
-        $userId = $user->id;
-
-        $passwordChangeRequest = $this->getEntityManager()->getRepository('PasswordChangeRequest')->where([
-            'userId' => $userId
-        ])->findOne();
-        if ($passwordChangeRequest) {
-            throw new Forbidden(json_encode(['reason' => 'Already-Sent']));
-        }
-
-        $requestId = Util::generateId() . Util::generateKey();
-
-        $passwordChangeRequest = $this->getEntityManager()->getEntity('PasswordChangeRequest');
-        $passwordChangeRequest->set([
-            'userId' => $userId,
-            'requestId' => $requestId,
-            'url' => $url
-        ]);
-
-        if (!$user->isAdmin() && $this->getConfig()->get('authenticationMethod', 'Espo') !== 'Espo') {
-            throw new Forbidden();
-        }
-
-        $this->sendChangePasswordLink($requestId, $emailAddress, $user);
-
-        $this->getEntityManager()->saveEntity($passwordChangeRequest);
-
-        if (!$passwordChangeRequest->id) {
-            throw new Error();
-        }
-
-        $dt = new \DateTime();
-        $dt->add(new \DateInterval('PT'. self::PASSWORD_CHANGE_REQUEST_LIFETIME . 'M'));
-
-        $job = $this->getEntityManager()->getEntity('Job');
-
-        $job->set([
-            'serviceName' => 'User',
-            'methodName' => 'removeChangePasswordRequestJob',
-            'data' => [
-                'id' => $passwordChangeRequest->id
-            ],
-            'executeTime' => $dt->format('Y-m-d H:i:s'),
-            'queue' => 'q1'
-        ]);
-
-        $this->getEntityManager()->saveEntity($job);
-
+        $recovery = $this->injectableFactory->create('\\Espo\\Core\\Password\\Recovery');
+        $recovery->request($emailAddress, $userName, $url);
         return true;
+    }
+
+    public function changePasswordByRequest(string $requestId, string $password)
+    {
+        $recovery = $this->injectableFactory->create('\\Espo\\Core\\Password\\Recovery');
+
+        $request = $recovery->getRequest($requestId);
+
+        $userId = $request->get('userId');
+
+        if (!$userId) throw new Error();
+
+        $this->changePassword($userId, $password);
+
+        $recovery->removeRequest($requestId);
+
+        return (object) [
+            'url' => $request->get('url'),
+        ];
     }
 
     public function removeChangePasswordRequestJob($data)
@@ -323,7 +247,7 @@ class User extends Record
         }
     }
 
-    public function create($data)
+    public function create(StdClass $data) : Entity
     {
         $newPassword = null;
         if (property_exists($data, 'password')) {
@@ -345,7 +269,7 @@ class User extends Record
         return $user;
     }
 
-    public function update($id, $data)
+    public function update(string $id, StdClass $data) : Entity
     {
         if ($id == 'system') {
             throw new Forbidden();
@@ -411,7 +335,7 @@ class User extends Record
         $entity->set('apiKey', $apiKey);
 
         if ($entity->get('authMethod') === 'Hmac') {
-            $secretKey = \Espo\Core\Utils\Util::generateKey();
+            $secretKey = \Espo\Core\Utils\Util::generateSecretKey();
             $entity->set('secretKey', $secretKey);
         }
 
@@ -439,7 +363,7 @@ class User extends Record
             throw new Forbidden("Generate new password: Can't process because user desn't have email address.");
         }
 
-        if (!$this->getConfig()->get('smtpServer') && !$this->getConfig()->get('internalSmtpServer')) {
+        if (!$this->emailSender->hasSystemSmtp() && !$this->getConfig()->get('internalSmtpServer')) {
             throw new Forbidden("Generate new password: Can't process because SMTP is not configured.");
         }
 
@@ -508,7 +432,7 @@ class User extends Record
             $entity->set('apiKey', $apiKey);
 
             if ($entity->get('authMethod') === 'Hmac') {
-                $secretKey = \Espo\Core\Utils\Util::generateKey();
+                $secretKey = \Espo\Core\Utils\Util::generateSecretKey();
                 $entity->set('secretKey', $secretKey);
             }
         }
@@ -559,7 +483,7 @@ class User extends Record
 
         if ($entity->isApi()) {
             if ($entity->isAttributeChanged('authMethod') && $entity->get('authMethod') === 'Hmac') {
-                $secretKey = \Espo\Core\Utils\Util::generateKey();
+                $secretKey = \Espo\Core\Utils\Util::generateSecretKey();
                 $entity->set('secretKey', $secretKey);
             }
         }
@@ -585,11 +509,11 @@ class User extends Record
 
         $email = $this->getEntityManager()->getEntity('Email');
 
-        if (!$this->getConfig()->get('smtpServer') && !$this->getConfig()->get('internalSmtpServer')) {
+        if (!$this->emailSender->hasSystemSmtp() && !$this->getConfig()->get('internalSmtpServer')) {
             return;
         }
 
-        $templateFileManager = $this->getContainer()->get('templateFileManager');
+        $templateFileManager = $this->templateFileManager;
 
         $siteUrl = $this->getConfig()->getSiteUrl() . '/';
 
@@ -632,55 +556,7 @@ class User extends Record
 
         $data['password'] = $password;
 
-        $htmlizer = new \Espo\Core\Htmlizer\Htmlizer($this->getFileManager(), $this->getDateTime(), $this->getNumber(), null);
-
-        $subject = $htmlizer->render($user, $subjectTpl, null, $data, true);
-        $body = $htmlizer->render($user, $bodyTpl, null, $data, true);
-
-        $email->set([
-            'subject' => $subject,
-            'body' => $body,
-            'to' => $emailAddress
-        ]);
-
-        if ($this->getConfig()->get('smtpServer')) {
-            $this->getMailSender()->useGlobal();
-        } else {
-            $this->getMailSender()->useSmtp(array(
-                'server' => $this->getConfig()->get('internalSmtpServer'),
-                'port' => $this->getConfig()->get('internalSmtpPort'),
-                'auth' => $this->getConfig()->get('internalSmtpAuth'),
-                'username' => $this->getConfig()->get('internalSmtpUsername'),
-                'password' => $this->getConfig()->get('internalSmtpPassword'),
-                'security' => $this->getConfig()->get('internalSmtpSecurity'),
-                'fromAddress' => $this->getConfig()->get('internalOutboundEmailFromAddress', $this->getConfig()->get('outboundEmailFromAddress'))
-            ));
-        }
-        $this->getMailSender()->send($email);
-    }
-
-    protected function sendChangePasswordLink($requestId, $emailAddress, Entity $user)
-    {
-        if (empty($emailAddress)) {
-            return;
-        }
-
-        $email = $this->getEntityManager()->getEntity('Email');
-
-        if (!$this->getConfig()->get('smtpServer') && !$this->getConfig()->get('internalSmtpServer')) {
-            throw new Error("SMTP credentials are not defined.");
-        }
-
-        $templateFileManager = $this->getContainer()->get('templateFileManager');
-
-        $subjectTpl = $templateFileManager->getTemplate('passwordChangeLink', 'subject', 'User');
-        $bodyTpl = $templateFileManager->getTemplate('passwordChangeLink', 'body', 'User');
-
-        $data = [];
-        $link = $this->getConfig()->getSiteUrl() . '?entryPoint=changePassword&id=' . $requestId;
-        $data['link'] = $link;
-
-        $htmlizer = new \Espo\Core\Htmlizer\Htmlizer($this->getFileManager(), $this->getDateTime(), $this->getNumber(), null);
+        $htmlizer = $this->htmlizerFactory->create(true);
 
         $subject = $htmlizer->render($user, $subjectTpl, null, $data, true);
         $body = $htmlizer->render($user, $bodyTpl, null, $data, true);
@@ -689,27 +565,28 @@ class User extends Record
             'subject' => $subject,
             'body' => $body,
             'to' => $emailAddress,
-            'isSystem' => true
         ]);
 
-        if ($this->getConfig()->get('smtpServer')) {
-            $this->getMailSender()->useGlobal();
-        } else {
-            $this->getMailSender()->useSmtp([
+        $sender = $this->emailSender->create();
+
+        if (!$this->emailSender->hasSystemSmtp()) {
+            $sender->withStmpParams([
                 'server' => $this->getConfig()->get('internalSmtpServer'),
                 'port' => $this->getConfig()->get('internalSmtpPort'),
                 'auth' => $this->getConfig()->get('internalSmtpAuth'),
                 'username' => $this->getConfig()->get('internalSmtpUsername'),
                 'password' => $this->getConfig()->get('internalSmtpPassword'),
                 'security' => $this->getConfig()->get('internalSmtpSecurity'),
-                'fromAddress' => $this->getConfig()->get('internalOutboundEmailFromAddress', $this->getConfig()->get('outboundEmailFromAddress'))
+                'fromAddress' => $this->getConfig()->get(
+                    'internalOutboundEmailFromAddress', $this->getConfig()->get('outboundEmailFromAddress')
+                ),
             ]);
         }
 
-        $this->getMailSender()->send($email);
+        $sender->send($email);
     }
 
-    public function delete($id)
+    public function delete(string $id)
     {
         if ($id == 'system') {
             throw new Forbidden();
@@ -792,13 +669,14 @@ class User extends Record
 
     protected function clearRoleCache($id)
     {
-        $this->getFileManager()->removeFile('data/cache/application/acl/' . $id . '.php');
-        $this->getContainer()->get('dataManager')->updateCacheTimestamp();
+        $this->fileManager->removeFile('data/cache/application/acl/' . $id . '.php');
+        $this->dataManager->updateCacheTimestamp();
     }
 
     protected function clearPortalRolesCache()
     {
-        $this->getInjection('fileManager')->removeInDir('data/cache/application/acl-portal');
+        $this->fileManager->removeInDir('data/cache/application/aclPortal');
+        $this->dataManager->updateCacheTimestamp();
     }
 
     public function massUpdate(array $params, $data)

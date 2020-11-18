@@ -29,200 +29,298 @@
 
 namespace Espo\Core;
 
+use Espo\Core\{
+    Exceptions\Error,
+    ORM\EntityManager,
+    Utils\Metadata,
+    Utils\Util,
+    Utils\Config,
+    Utils\File\Manager as FileManager,
+    Utils\Metadata\OrmMetadata,
+    HookManager,
+    Utils\Database\Schema\SchemaProxy,
+};
+
+use PDO;
+use Throwable;
+
+/**
+ * Clears cache, rebuilds the application.
+ */
 class DataManager
 {
-    private $container;
+    protected $config;
+    protected $entityManager;
+    protected $fileManager;
+    protected $metadata;
+    protected $ormMetadata;
+    protected $hookManager;
+    protected $schemaProxy;
 
     private $cachePath = 'data/cache';
 
-
-    public function __construct(Container $container)
-    {
-        $this->container = $container;
-    }
-
-    protected function getContainer()
-    {
-        return $this->container;
+    public function __construct(
+        EntityManager $entityManager,
+        Config $config,
+        FileManager $fileManager,
+        Metadata $metadata,
+        OrmMetadata $ormMetadata,
+        HookManager $hookManager,
+        SchemaProxy $schemaProxy
+    ) {
+        $this->entityManager = $entityManager;
+        $this->config = $config;
+        $this->fileManager = $fileManager;
+        $this->metadata = $metadata;
+        $this->ormMetadata = $ormMetadata;
+        $this->hookManager = $hookManager;
+        $this->schemaProxy = $schemaProxy;
     }
 
     /**
-     * Rebuild the system with metadata, database and cache clearing
-     *
-     * @return bool
+     * Rebuild the system with metadata, database and cache clearing.
      */
-    public function rebuild($entityList = null)
+    public function rebuild(?array $entityList = null)
     {
+        $this->clearCache();
+
+        $this->disableHooks();
+
         $this->populateConfigParameters();
 
-        $result = $this->clearCache();
+        $this->rebuildMetadata();
 
-        $result &= $this->rebuildMetadata();
-
-        $result &= $this->rebuildDatabase($entityList);
+        $this->rebuildDatabase($entityList);
 
         $this->rebuildScheduledJobs();
 
-        return $result;
+        $this->enableHooks();
     }
 
     /**
-     * Clear a cache
-     *
-     * @return bool
+     * Clear a cache.
      */
     public function clearCache()
     {
-        $result = $this->getContainer()->get('fileManager')->removeInDir($this->cachePath);
+        $result = $this->fileManager->removeInDir($this->cachePath);
 
         if ($result != true) {
-            throw new Exceptions\Error("Error while clearing cache");
+            throw new Error("Error while clearing cache");
         }
 
         $this->updateCacheTimestamp();
-
-        return $result;
     }
 
     /**
-     * Rebuild database
-     *
-     * @return bool
+     * Rebuild database.
      */
-    public function rebuildDatabase($entityList = null)
+    public function rebuildDatabase(?array $entityList = null)
     {
-        $schema = $this->getContainer()->get('schema');
+        $schema = $this->schemaProxy;
 
         try {
             $result = $schema->rebuild($entityList);
-        } catch (\Exception $e) {
+        }
+        catch (Throwable $e) {
             $result = false;
-            $GLOBALS['log']->error('Fault to rebuild database schema'.'. Details: '.$e->getMessage());
+
+            $GLOBALS['log']->error('Fault to rebuild database schema. Details: '. $e->getMessage());
         }
 
         if ($result != true) {
-            throw new Exceptions\Error("Error while rebuilding database. See log file for details.");
+            throw new Error("Error while rebuilding database. See log file for details.");
         }
 
-        $config = $this->getContainer()->get('config');
+        $config = $this->config;
 
         $databaseType = strtolower($schema->getDatabaseHelper()->getDatabaseType());
+
         if (!$config->get('actualDatabaseType') || $config->get('actualDatabaseType') != $databaseType) {
             $config->set('actualDatabaseType', $databaseType);
         }
 
         $databaseVersion = $schema->getDatabaseHelper()->getDatabaseVersion();
+
         if (!$config->get('actualDatabaseVersion') || $config->get('actualDatabaseVersion') != $databaseVersion) {
             $config->set('actualDatabaseVersion', $databaseVersion);
         }
 
         $this->updateCacheTimestamp();
-
-        return $result;
     }
 
     /**
-     * Rebuild metadata
-     *
-     * @return bool
+     * Rebuild metadata.
      */
     public function rebuildMetadata()
     {
-        $metadata = $this->getContainer()->get('metadata');
+        $metadata = $this->metadata;
 
         $metadata->init(true);
 
-        $ormData = $this->getContainer()->get('ormMetadata')->getData(true);
-        $this->getContainer()->get('entityManager')->setMetadata($ormData);
+        $ormData = $this->ormMetadata->getData(true);
+
+        $this->entityManager->setMetadata($ormData);
 
         $this->updateCacheTimestamp();
 
-        return empty($ormData) ? false : true;
+        if (empty($ormData)) {
+            throw new Error("Error while rebuilding metadata. See log file for details.");
+        }
     }
 
+    /**
+     * Rebuild scheduled jobs. Create system jobs.
+     */
     public function rebuildScheduledJobs()
     {
-        $metadata = $this->getContainer()->get('metadata');
-        $entityManager = $this->getContainer()->get('entityManager');
+        $metadata = $this->metadata;
+
+        $entityManager = $this->entityManager;
 
         $jobs = $metadata->get(['entityDefs', 'ScheduledJob', 'jobs'], []);
 
         $systemJobNameList = [];
 
         foreach ($jobs as $jobName => $defs) {
-            if ($jobName && !empty($defs['isSystem']) && !empty($defs['scheduling'])) {
-                $systemJobNameList[] = $jobName;
-                if (!$entityManager->getRepository('ScheduledJob')->where(array(
+            if (!$jobName) {
+                continue;
+            }
+
+            if (empty($defs['isSystem']) || empty($defs['scheduling'])) {
+                continue;
+            }
+
+            $systemJobNameList[] = $jobName;
+
+            $sj = $entityManager
+                ->getRepository('ScheduledJob')
+                ->where([
                     'job' => $jobName,
                     'status' => 'Active',
-                    'scheduling' => $defs['scheduling']
-                ))->findOne()) {
-                    $job = $entityManager->getRepository('ScheduledJob')->where([
-                        'job' => $jobName
-                    ])->findOne();
-                    if ($job) {
-                        $entityManager->removeEntity($job);
-                    }
-                    $name = $jobName;
-                    if (!empty($defs['name'])) {
-                        $name = $defs['name'];
-                    }
-                    $job = $entityManager->getEntity('ScheduledJob');
-                    $job->set([
-                        'job' => $jobName,
-                        'status' => 'Active',
-                        'scheduling' => $defs['scheduling'],
-                        'isInternal' => true,
-                        'name' => $name
-                    ]);
-                    $entityManager->saveEntity($job);
-                }
+                    'scheduling' => $defs['scheduling'],
+                ])
+                ->findOne();
+
+            if ($sj) {
+                continue;
             }
+
+            $job = $entityManager
+                ->getRepository('ScheduledJob')
+                ->where([
+                    'job' => $jobName
+                ])
+                ->findOne();
+
+            if ($job) {
+                $entityManager->removeEntity($job);
+            }
+
+            $name = $jobName;
+
+            if (!empty($defs['name'])) {
+                $name = $defs['name'];
+            }
+
+            $job = $entityManager->getEntity('ScheduledJob');
+
+            $job->set([
+                'job' => $jobName,
+                'status' => 'Active',
+                'scheduling' => $defs['scheduling'],
+                'isInternal' => true,
+                'name' => $name,
+            ]);
+
+            $entityManager->saveEntity($job);
         }
 
-        $internalScheduledJobList = $entityManager->getRepository('ScheduledJob')->where([
-            'isInternal' => true
-        ])->find();
+        $internalScheduledJobList = $entityManager
+            ->getRepository('ScheduledJob')
+            ->where([
+                'isInternal' => true,
+            ])
+            ->find();
+
         foreach ($internalScheduledJobList as $scheduledJob) {
             $jobName = $scheduledJob->get('job');
+
             if (!in_array($jobName, $systemJobNameList)) {
                 $entityManager->getRepository('ScheduledJob')->deleteFromDb($scheduledJob->id);
             }
         }
     }
 
+    /**
+     * Update cache timestamp.
+     */
     public function updateCacheTimestamp()
     {
-        $this->getContainer()->get('config')->updateCacheTimestamp();
-        $this->getContainer()->get('config')->save(); /* correct rebuildDatabase() method when remove this line */
+        $this->config->updateCacheTimestamp();
 
-        return true;
+        /* Fix rebuildDatabase() method when remove this line. */
+        $this->config->save();
     }
 
     protected function populateConfigParameters()
     {
-        $config = $this->getContainer()->get('config');
+        $this->setFullTextConfigParameters();
+        $this->setCryptKeyConfigParameter();
 
-        $pdo = $this->getContainer()->get('entityManager')->getPDO();
-        $query = "SHOW VARIABLES LIKE 'ft_min_word_len'";
-        $sth = $pdo->prepare($query);
+        $this->config->save();
+    }
+
+    protected function setFullTextConfigParameters()
+    {
+        $config = $this->config;
+
+        $platform = $config->get('database.platform') ?? null;
+        $driver = $config->get('database.driver') ?? '';
+
+        if ($platform !== 'Mysql' && strpos($driver, 'mysql') === false) {
+            return;
+        }
+
+        $pdo = $this->entityManager->getPDO();
+
+        $sql = "SHOW VARIABLES LIKE 'ft_min_word_len'";
+
+        $sth = $pdo->prepare($sql);
         $sth->execute();
 
         $fullTextSearchMinLength = null;
-        if ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
+
+        if ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
             if (isset($row['Value'])) {
                 $fullTextSearchMinLength = intval($row['Value']);
             }
         }
 
         $config->set('fullTextSearchMinLength', $fullTextSearchMinLength);
+    }
+
+    protected function setCryptKeyConfigParameter()
+    {
+        $config = $this->config;
 
         $cryptKey = $config->get('cryptKey');
-        if (!$cryptKey) {
-            $cryptKey = \Espo\Core\Utils\Util::generateKey();
-            $config->set('cryptKey', $cryptKey);
+
+        if ($cryptKey) {
+            return;
         }
 
-        $config->save();
+        $cryptKey = Util::generateSecretKey();
+
+        $config->set('cryptKey', $cryptKey);
+    }
+
+    protected function disableHooks()
+    {
+        $this->hookManager->disable();
+    }
+
+    protected function enableHooks()
+    {
+        $this->hookManager->enable();
     }
 }

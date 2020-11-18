@@ -29,10 +29,9 @@
 
 namespace Espo\Controllers;
 
-use \Espo\Core\Exceptions\BadRequest;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\NotFound;
 
 class Email extends \Espo\Core\Controllers\Record
 {
@@ -229,5 +228,16 @@ class Email extends \Espo\Core\Controllers\Record
             throw new BadRequest();
         }
         return $this->getRecordService()->moveToFolderByIdList($idList, $data->folderId);
+    }
+
+    public function getActionGetInsertFieldData($params, $data, $request)
+    {
+        if (!$this->getAcl()->checkScope('Email', 'create')) throw new Forbidden();
+
+        return $this->getServiceFactory()->create('EmailTemplate')->getInsertFieldData([
+            'parentId' => $request->get('parentId'),
+            'parentType' => $request->get('parentType'),
+            'to' => $request->get('to'),
+        ]);
     }
 }

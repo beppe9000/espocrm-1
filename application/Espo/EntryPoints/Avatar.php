@@ -29,18 +29,22 @@
 
 namespace Espo\EntryPoints;
 
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
 
-class Avatar extends Image
+use Espo\Core\EntryPoints\NotStrictAuth;
+use Espo\Core\Di;
+
+use Espo\Core\Api\Request;
+
+class Avatar extends Image implements Di\MetadataAware
 {
-    public static $authRequired = true;
+    use Di\MetadataSetter;
+    use NotStrictAuth;
 
-    public static $notStrictAuth = true;
-
-    protected $systemColor = [212,114,155];
+    protected $systemColor = '#a4b5bd';
 
     protected $colorList = [
         [111,168,214],
@@ -63,19 +67,22 @@ class Avatar extends Image
         }
         $x = intval($sum % 128) + 1;
 
-        $index = intval($x * count($this->colorList) / 128);
-        return $this->colorList[$index];
+        $colorList = $this->metadata->get(['app', 'avatars', 'colorList']) ?? $this->colorList;
+
+        $index = intval($x * count($colorList) / 128);
+        return $colorList[$index];
     }
 
-    public function run()
+    public function run(Request $request)
     {
-        if (empty($_GET['id'])) {
+        $userId = $request->get('id');
+        $size = $request->get('size') ?? null;
+
+        if (!$userId) {
             throw new BadRequest();
         }
 
-        $userId = $_GET['id'];
-
-        $user = $this->getEntityManager()->getEntity('User', $userId);
+        $user = $this->entityManager->getEntity('User', $userId);
         if (!$user) {
             header('Content-Type: image/png');
             $img  = imagecreatetruecolor(14, 14);
@@ -89,11 +96,6 @@ class Avatar extends Image
         }
 
         $id = $user->get('avatarId');
-
-        $size = null;
-        if (!empty($_GET['size'])) {
-            $size = $_GET['size'];
-        }
 
         if (!empty($id)) {
             $this->show($id, $size, true);
@@ -111,7 +113,7 @@ class Avatar extends Image
                 $hash = $userId;
                 $color = $this->getColor($userId);
                 if ($hash === 'system') {
-                    $color = $this->systemColor;
+                    $color = $this->metadata->get(['app', 'avatars', 'systemColor']) ?? $this->systemColor;
                 }
 
                 $imgContent = $identicon->getImageData($hash, $width, $color);
@@ -120,6 +122,4 @@ class Avatar extends Image
             }
         }
     }
-
 }
-

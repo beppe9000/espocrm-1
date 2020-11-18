@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/admin/layouts/base', 'view', function (Dep) {
+define('views/admin/layouts/base', 'view', function (Dep) {
 
     return Dep.extend({
 
@@ -78,6 +78,20 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
             this.$el.find('.button-container button').removeAttr('disabled');
         },
 
+        setConfirmLeaveOut: function (value) {
+            this.getRouter().confirmLeaveOut = value;
+        },
+
+        setIsChanged: function () {
+            this.isChanged = true;
+            this.setConfirmLeaveOut(true);
+        },
+
+        setIsNotChanged: function () {
+            this.isChanged = false;
+            this.setConfirmLeaveOut(false);
+        },
+
         save: function (callback) {
             var layout = this.fetch();
 
@@ -89,16 +103,18 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
             this.getHelper().layoutManager.set(this.scope, this.type, layout, function () {
                 this.notify('Saved', 'success', 2000);
 
+                this.setIsNotChanged();
+
                 if (typeof callback == 'function') {
                     callback();
                 }
-            }.bind(this));
+            }.bind(this), this.setId);
         },
 
         resetToDefault: function () {
             this.getHelper().layoutManager.resetToDefault(this.scope, this.type, function () {
                 this.cancel();
-            }.bind(this));
+            }.bind(this), this.options.setId);
         },
 
         reset: function () {
@@ -112,6 +128,7 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
             this.events = _.clone(this.events);
             this.scope = this.options.scope;
             this.type = this.options.type;
+            this.setId = this.options.setId;
 
             this.dataAttributeList =
                 this.getMetadata().get(['clientDefs', this.scope, 'additionalLayouts', this.type, 'dataAttributeList'])
@@ -119,6 +136,10 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
                 this.dataAttributeList;
 
             this.dataAttributeList = Espo.Utils.clone(this.dataAttributeList);
+
+            this.once('remove', function () {
+                this.setIsNotChanged();
+            }, this);
         },
 
         unescape: function (string) {
@@ -160,12 +181,15 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
                         $li.find('.' + key + '-value').text(attributes[key]);
                     }
                     view.close();
+
+                    this.setIsChanged();
                 }, this);
             }.bind(this));
         },
 
         cancel: function () {
             this.loadLayout(function () {
+                this.setIsNotChanged();
                 this.reRender();
             }.bind(this));
         },
@@ -175,4 +199,3 @@ Espo.define('views/admin/layouts/base', 'view', function (Dep) {
         },
     });
 });
-

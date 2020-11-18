@@ -29,10 +29,13 @@
 
 namespace Espo\Modules\Crm\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\{
+    Entity,
+    QueryParams\Select,
+};
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Forbidden;
 
 class Opportunity extends \Espo\Services\Record
 {
@@ -41,7 +44,7 @@ class Opportunity extends \Espo\Services\Record
         'accountName'
     ];
 
-    public function reportSalesPipeline($dateFilter, $dateFrom = null, $dateTo = null, $useLastStage = false)
+    public function reportSalesPipeline($dateFilter, $dateFrom = null, $dateTo = null, $useLastStage = false, $teamId = null)
     {
         if (in_array('amount', $this->getAcl()->getScopeForbiddenAttributeList('Opportunity'))) {
             throw new Forbidden();
@@ -76,20 +79,31 @@ class Opportunity extends \Espo\Services\Record
             ];
         }
 
+        if ($teamId) {
+            $whereClause[] = [
+                'teamsFilter.id' => $teamId,
+            ];
+        }
+
         $selectParams = [
+            'from' => 'Opportunity',
             'select' => [$stageField, ['SUM:amountConverted', 'amount']],
             'whereClause' => $whereClause,
             'orderBy' => 'LIST:'.$stageField.':' . implode(',', $options),
-            'groupBy' => [$stageField]
+            'groupBy' => [$stageField],
         ];
+
+        if ($teamId) {
+            $selectManager->addJoin(['teams', 'teamsFilter'], $selectParams);
+        }
 
         $selectManager->applyAccess($selectParams);
 
         $this->handleDistinctReportSelectParams($selectParams, $whereClause);
 
-        $this->getEntityManager()->getRepository('Opportunity')->handleSelectParams($selectParams);
+        $query = Select::fromRaw($selectParams);
 
-        $sql = $this->getEntityManager()->getQuery()->createSelectQuery('Opportunity', $selectParams);
+        $sql = $this->getEntityManager()->getQueryComposer()->compose($query);
 
         $sth = $pdo->prepare($sql);
         $sth->execute();
@@ -143,7 +157,7 @@ class Opportunity extends \Espo\Services\Record
         $whereClause = [
             ['stage!=' => $this->getLostStageList()],
             ['leadSource!=' => ''],
-            ['leadSource!=' => null]
+            ['leadSource!=' => null],
         ];
 
         if ($dateFilter !== 'ever') {
@@ -154,26 +168,28 @@ class Opportunity extends \Espo\Services\Record
         }
 
         $selectParams = [
+            'from' => 'Opportunity',
             'select' => ['leadSource', ['SUM:amountWeightedConverted', 'amount']],
             'whereClause' => $whereClause,
             'orderBy' => 'LIST:leadSource:' . implode(',', $options),
-            'groupBy' => ['leadSource']
+            'groupBy' => ['leadSource'],
         ];
 
         $selectManager->applyAccess($selectParams);
 
         $this->handleDistinctReportSelectParams($selectParams, $whereClause);
 
-        $this->getEntityManager()->getRepository('Opportunity')->handleSelectParams($selectParams);
+        $query = Select::fromRaw($selectParams);
 
-        $sql = $this->getEntityManager()->getQuery()->createSelectQuery('Opportunity', $selectParams);
+        $sql = $this->getEntityManager()->getQueryComposer()->compose($query);
 
         $sth = $pdo->prepare($sql);
         $sth->execute();
 
         $rows = $sth->fetchAll(\PDO::FETCH_ASSOC);
 
-        $result = array();
+        $result = [];
+
         foreach ($rows as $row) {
             $result[$row['leadSource']] = floatval($row['amount']);
         }
@@ -199,21 +215,22 @@ class Opportunity extends \Espo\Services\Record
 
         $whereClause = [
             ['stage!=' => $this->getLostStageList()],
-            ['stage!=' => $this->getWonStageList()]
+            ['stage!=' => $this->getWonStageList()],
         ];
 
         if ($dateFilter !== 'ever') {
             $whereClause[] = [
                 'closeDate>=' => $dateFrom,
-                'closeDate<' => $dateTo
+                'closeDate<' => $dateTo,
             ];
         }
 
         $selectParams = [
+            'from' => 'Opportunity',
             'select' => ['stage', ['SUM:amountConverted', 'amount']],
             'whereClause' => $whereClause,
             'orderBy' => 'LIST:stage:' . implode(',', $options),
-            'groupBy' => ['stage']
+            'groupBy' => ['stage'],
         ];
 
         $stageIgnoreList = array_merge($this->getLostStageList(), $this->getWonStageList());
@@ -222,9 +239,9 @@ class Opportunity extends \Espo\Services\Record
 
         $this->handleDistinctReportSelectParams($selectParams, $whereClause);
 
-        $this->getEntityManager()->getRepository('Opportunity')->handleSelectParams($selectParams);
+        $query = Select::fromRaw($selectParams);
 
-        $sql = $this->getEntityManager()->getQuery()->createSelectQuery('Opportunity', $selectParams);
+        $sql = $this->getEntityManager()->getQueryComposer()->compose($query);
 
         $sth = $pdo->prepare($sql);
         $sth->execute();
@@ -272,6 +289,7 @@ class Opportunity extends \Espo\Services\Record
         }
 
         $selectParams = [
+            'from' => 'Opportunity',
             'select' => [['MONTH:closeDate', 'month'], ['SUM:amountConverted', 'amount']],
             'whereClause' => $whereClause,
             'orderBy' => 1,
@@ -282,16 +300,17 @@ class Opportunity extends \Espo\Services\Record
 
         $this->handleDistinctReportSelectParams($selectParams, $whereClause);
 
-        $this->getEntityManager()->getRepository('Opportunity')->handleSelectParams($selectParams);
+        $query = Select::fromRaw($selectParams);
 
-        $sql = $this->getEntityManager()->getQuery()->createSelectQuery('Opportunity', $selectParams);
+        $sql = $this->getEntityManager()->getQueryComposer()->compose($query);
 
         $sth = $pdo->prepare($sql);
         $sth->execute();
 
         $rows = $sth->fetchAll(\PDO::FETCH_ASSOC);
 
-        $result = array();
+        $result = [];
+
         foreach ($rows as $row) {
             $result[$row['month']] = floatval($row['amount']);
         }

@@ -29,39 +29,56 @@
 
 namespace Espo\EntryPoints;
 
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\NotFound;
 
-class Portal extends \Espo\Core\EntryPoints\Base
+use Espo\Core\EntryPoints\{
+    EntryPoint,
+    NoAuth,
+};
+
+use Espo\Core\{
+    Utils\ClientManager,
+    Utils\Config,
+    Portal\Application as PortalApplication,
+    Portal\ApplicationRunners\Client,
+    Portal\Utils\Url,
+    Api\Request,
+    Api\Response,
+};
+
+use StdClass;
+
+class Portal implements EntryPoint
 {
-    public static $authRequired = false;
+    use NoAuth;
 
-    public function run($data = array())
+    protected $clientManager;
+    protected $config;
+
+    public function __construct(ClientManager $clientManager, Config $config)
     {
-        if (!empty($_GET['id'])) {
-            $id = $_GET['id'];
-        } else if (!empty($data['id'])) {
-            $id = $data['id'];
-        } else {
-            $url = $_SERVER['REQUEST_URI'];
-            $id = explode('/', $url)[count(explode('/', $_SERVER['SCRIPT_NAME'])) - 1];
+        $this->clientManager = $clientManager;
+        $this->config = $config;
+    }
 
-            if (!isset($id)) {
-                $url = $_SERVER['REDIRECT_URL'];
-                $id = explode('/', $url)[count(explode('/', $_SERVER['SCRIPT_NAME'])) - 1];
-            }
+    public function run(Request $request, Response $response, ?StdClass $data = null)
+    {
+        $data = $data ?? (object) [];
 
-            if (!$id) {
-                $id = $this->getConfig()->get('defaultPortalId');
-            }
-            if (!$id) {
-                throw new NotFound();
-            }
+        $id = $data->id ?? Url::detectPortalId();
+
+        if (!$id) {
+            $id = $this->config->get('defaultPortalId');
         }
 
-        $application = new \Espo\Core\Portal\Application($id);
-        $application->setBasePath($this->getContainer()->get('clientManager')->getBasePath());
-        $application->runClient();
+        if (!$id) {
+            throw new NotFound("Portal ID not detected.");
+        }
+
+        $application = new PortalApplication($id);
+
+        $application->setClientBasePath($this->clientManager->getBasePath());
+
+        $application->run(Client::class);
     }
 }

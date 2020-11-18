@@ -140,19 +140,19 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $fm = $this->getContainer()->get('formulaManager');
 
         $script = "record\\exists('Meeting', 'status', 'Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertTrue($result);
 
         $script = "record\\exists('Meeting', 'status', 'Not Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertFalse($result);
 
         $script = "record\\exists('Meeting', 'status', list('Held', 'Planned'))";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertTrue($result);
 
         $script = "record\\exists('Meeting', 'status', list('Not Held'))";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertFalse($result);
     }
 
@@ -170,24 +170,24 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $fm = $this->getContainer()->get('formulaManager');
 
         $script = "record\\count('Meeting', 'status', 'Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(1, $result);
 
         $script = "record\\count('Meeting', 'status', 'Not Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(0, $result);
 
         $script = "record\\count('Meeting', 'status', list('Held', 'Planned'))";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(2, $result);
 
         $script = "record\\count('Meeting', 'status', list('Not Held'))";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(0, $result);
 
 
         $script = "record\\count('Meeting', 'planned')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(1, $result);
     }
 
@@ -215,31 +215,31 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         ]);
 
         $script = "record\\findOne('Meeting', 'name', 'asc')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m1->id, $result);
 
         $script = "record\\findOne('Meeting', 'name', 'desc')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m4->id, $result);
 
         $script = "record\\findOne('Meeting', 'name', 'asc', 'planned')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m2->id, $result);
 
         $script = "record\\findOne('Meeting', 'name', 'asc', 'status=', 'Planned')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m2->id, $result);
 
         $script = "record\\findOne('Meeting', 'name', 'asc', 'status=', 'Planned', 'assignedUserId=', '1')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m4->id, $result);
 
         $script = "record\\findOne('Meeting', 'name', 'asc', 'status=', 'Not Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals(null, $result);
     }
 
-    public function testRecordFindRelatedOne()
+    public function testRecordFindRelatedOne1()
     {
         $fm = $this->getContainer()->get('formulaManager');
         $em = $this->getContainer()->get('entityManager');
@@ -289,28 +289,102 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $em->getRepository('Account')->relate($account, 'contacts', $c2);
 
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'meetings', 'name', 'asc')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m1->id, $result);
 
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'meetings', 'name', 'desc', 'planned')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m4->id, $result);
 
+        $script = "record\\findRelatedOne('Account', '".$account->id."', 'meetings', 'name', 'desc', 'held')";
+        $result = $fm->run($script);
+        $this->assertEquals($m3->id, $result);
+
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'meetings', 'name', 'desc', 'status', 'Held')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m3->id, $result);
 
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'meetingsPrimary', 'name', 'asc')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($m1->id, $result);
 
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'contacts', 'name', 'asc')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($c1->id, $result);
 
         $script = "record\\findRelatedOne('Account', '".$account->id."', 'contacts', 'name', 'asc', 'lastName', '2')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals($c2->id, $result);
+    }
+
+    public function testRecordFindRelatedOne2()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a = $em->createEntity('Account', [
+        ]);
+
+        $o = $em->createEntity('Opportunity', [
+            'accountId' => $a->id,
+        ]);
+
+        $script = "record\\findRelatedOne('Opportunity', '".$o->id."', 'account')";
+        $result = $fm->run($script);
+        $this->assertEquals($a->id, $result);
+    }
+
+    public function testRecordFindRelatedMany()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a = $em->createEntity('Account', []);
+
+        $o1 = $em->createEntity('Opportunity', [
+            'accountId' => $a->id,
+            'stage' => 'Prospecting',
+            'name' => '1',
+        ]);
+        $o2 = $em->createEntity('Opportunity', [
+            'accountId' => $a->id,
+            'stage' => 'Closed Won',
+            'name' => '2',
+        ]);
+        $o3 = $em->createEntity('Opportunity', [
+            'accountId' => $a->id,
+            'stage' => 'Prospecting',
+            'name' => '3',
+        ]);
+
+        $ow1 = $em->createEntity('Opportunity', []);
+
+
+        $script = "record\\findRelatedMany('Account', '".$a->id."', 'opportunities', 2, null, null, 'open')";
+        $result = $fm->run($script);
+        $this->assertIsArray($result);
+        $this->assertEquals(2, count($result));
+        $this->assertEquals(true, in_array($o1->id, $result));
+        $this->assertEquals(true, in_array($o3->id, $result));
+
+        $script = "record\\findRelatedMany('Account', '".$a->id."', 'opportunities', 3)";
+        $result = $fm->run($script);
+        $this->assertIsArray($result);
+        $this->assertEquals(3, count($result));
+        $this->assertEquals(true, in_array($o1->id, $result));
+        $this->assertEquals(true, in_array($o2->id, $result));
+
+
+        $script = "record\\findRelatedMany('Account', '".$a->id."', 'opportunities', 3, 'name', 'asc')";
+        $result = $fm->run($script);
+        $this->assertIsArray($result);
+        $this->assertEquals(3, count($result));
+        $this->assertEquals([$o1->id, $o2->id, $o3->id], $result);
+
+        $script = "record\\findRelatedMany('Account', '".$a->id."', 'opportunities', 3, 'name', 'asc', 'stage=', 'Prospecting')";
+        $result = $fm->run($script);
+        $this->assertIsArray($result);
+        $this->assertEquals([$o1->id, $o3->id], $result);
     }
 
     public function testRecordAttribute()
@@ -324,8 +398,32 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         ]);
 
         $script = "record\\attribute('Meeting', '".$m1->id."', 'name')";
-        $result = $fm->run($script, $contact);
+        $result = $fm->run($script);
         $this->assertEquals('1', $result);
+    }
+
+    public function testRecordCreateUpdate()
+    {
+        $em = $this->getContainer()->get('entityManager');
+        $fm = $this->getContainer()->get('formulaManager');
+
+        $script = "record\\create('Meeting', 'name', 'test', 'assignedUserId', '1')";
+        $id = $fm->run($script);
+
+        $this->assertIsString('string', $id);
+
+        $m = $em->getEntity('Meeting', $id);
+
+        $this->assertNotNull($m);
+        $this->assertEquals('1', $m->get('assignedUserId'));
+
+        $script = "record\\update('Meeting', '{$id}', 'name', 'test-chanhed', 'assignedUserId', '2')";
+        $result = $fm->run($script);
+
+        $this->assertTrue($result);
+
+        $m = $em->getEntity('Meeting', $id);
+        $this->assertEquals('2', $m->get('assignedUserId'));
     }
 
     public function testPasswordGenerate()
@@ -397,6 +495,25 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $this->assertTrue($em->getRepository('Account')->isRelated($a, 'opportunities', $o));
     }
 
+    public function testRecordRelate1()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a = $em->createEntity('Account', [
+            'name' => '1',
+        ]);
+        $o = $em->createEntity('Opportunity', [
+            'name' => '1',
+        ]);
+
+        $script = "record\\relate('Account', '".$a->id."', 'opportunities', list('".$o->id."'))";
+        $result = $fm->run($script, $contact);
+
+        $this->assertTrue($result);
+        $this->assertTrue($em->getRepository('Account')->isRelated($a, 'opportunities', $o));
+    }
+
     public function testRecordUnrelate()
     {
         $fm = $this->getContainer()->get('formulaManager');
@@ -435,7 +552,7 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $script = "record\\relationColumn('Account', '{$a->id}', 'contacts', '{$c->id}', 'role')";
         $result = $fm->run($script);
 
-        $this->assertEquals( 'test', $result);
+        $this->assertEquals('test', $result);
     }
 
     public function testRecordUpdateRelationColumn()
@@ -458,5 +575,182 @@ class FormulaTest extends \tests\integration\Core\BaseTestCase
         $value = $em->getRepository('Account')->getRelationColumn($a, 'contacts', $c->id, 'role');
 
         $this->assertEquals('test', $value);
+    }
+
+    public function testExtAccountFindByEmailAddress()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a1 = $em->createEntity('Account', [
+            'name' => '1',
+        ]);
+        $a2 = $em->createEntity('Account', [
+            'name' => '2',
+            'emailAddress' => 'a@gmail.com',
+        ]);
+        $a3 = $em->createEntity('Account', [
+            'name' => '3',
+            'emailAddress' => 'a@hello-test.com',
+        ]);
+        $a4 = $em->createEntity('Account', [
+            'name' => '4',
+            'emailAddress' => 'a@brom.com',
+        ]);
+
+        $c2 = $em->createEntity('Contact', [
+            'lastName' => '2',
+            'emailAddress' => 'c@gmail.com',
+            'accountId' => $a2->id,
+        ]);
+        $c4 = $em->createEntity('Contact', [
+            'lastName' => '4',
+            'emailAddress' => 'c@brom.com',
+        ]);
+
+        $script = "ext\\account\\findByEmailAddress('b@hello-test.com')";
+        $this->assertEquals($a3->id, $fm->run($script));
+
+        $script = "ext\\account\\findByEmailAddress('b@gmail.com')";
+        $this->assertEquals(null, $fm->run($script));
+
+        $script = "ext\\account\\findByEmailAddress('c@gmail.com')";
+        $this->assertEquals($a2->id, $fm->run($script));
+
+        $script = "ext\\account\\findByEmailAddress('b@brom.com')";
+        $this->assertEquals($a4->id, $fm->run($script));
+
+        $script = "ext\\account\\findByEmailAddress('c@brom.com')";
+        $this->assertEquals($a4->id, $fm->run($script));
+
+        $script = "ext\\account\\findByEmailAddress('')";
+        $this->assertEquals(null, $fm->run($script));
+    }
+
+    public function testExtEmailApplyTemplate()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a = $em->createEntity('Account', [
+            'name' => '1',
+        ]);
+
+        $c = $em->createEntity('Contact', [
+            'lastName' => 'Contact 1',
+            'emailAddress' => 'test@tester.com',
+        ]);
+
+        $attachment1 = $em->createEntity('Attachment', [
+            'name' => 'a1',
+            'contents' => '1',
+        ]);
+        $attachment2 = $em->createEntity('Attachment', [
+            'name' => 'a2',
+            'contents' => '2',
+        ]);
+
+        $emailTemplate = $em->createEntity('EmailTemplate', [
+            'name' => '1',
+            'subject' => 'Test',
+            'body' => 'Test {Account.name} Hello',
+            'isHtml' => false,
+            'attachmentsIds' => [$attachment2->id],
+        ]);
+
+        $email = $em->createEntity('Email', [
+            'to' => 'test@tester.com',
+            'status' => 'Draft',
+            'attachmentsIds' => [$attachment1->id],
+        ]);
+
+        $script = "ext\\email\\applyTemplate('{$email->id}', '{$emailTemplate->id}', 'Account', '{$a->id}')";
+        $fm->run($script);
+
+        $email = $em->getEntity('Email', $email->id);
+
+        $attachmentsIds = $email->getLinkMultipleIdList('attachments');
+
+        $this->assertEquals('Test', $email->get('name'));
+        $this->assertEquals('Test 1 Hello', $email->get('body'));
+        $this->assertEquals(false, $email->get('isHtml'));
+        $this->assertEquals(2, count($attachmentsIds));
+
+        $case = $em->createEntity('Case', [
+            'name' => 'Case 1',
+        ]);
+
+        $email = $em->createEntity('Email', [
+            'to' => 'test@tester.com',
+            'status' => 'Draft',
+            'parentId' => $case->id,
+            'parentType' => 'Case',
+        ]);
+        $emailTemplate = $em->createEntity('EmailTemplate', [
+            'name' => '1',
+            'subject' => 'Test',
+            'body' => 'Test {Person.name} Hello, {Case.name}',
+            'isHtml' => false,
+        ]);
+
+        $script = "ext\\email\\applyTemplate('{$email->id}', '{$emailTemplate->id}')";
+        $fm->run($script);
+
+        $email = $em->getEntity('Email', $email->id);
+
+        $this->assertEquals('Test', $email->get('name'));
+        $this->assertEquals('Test Contact 1 Hello, Case 1', $email->get('body'));
+    }
+
+    public function testExtPdfGenerate()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $em = $this->getContainer()->get('entityManager');
+
+        $a = $em->createEntity('Account', [
+            'name' => '1',
+        ]);
+
+        $template = $em->createEntity('Template', [
+            'body' => 'Test {{name}} hello',
+            'entityType' => 'Account',
+        ]);
+
+        $script = "ext\\pdf\\generate('Account', '{$a->id}', '{$template->id}', 'test')";
+        $id = $fm->run($script);
+
+        $this->assertIsString($id);
+
+        $attachment = $em->getEntity('Attachment', $id);
+
+        $this->assertNotNull($attachment);
+        $this->assertEquals('test.pdf', $attachment->get('name'));
+        $this->assertTrue(file_exists('data/upload/' . $attachment->id));
+
+
+        $script = "ext\\pdf\\generate('Account', '{$a->id}', '{$template->id}', 'test.pdf')";
+        $id = $fm->run($script);
+
+        $attachment = $em->getEntity('Attachment', $id);
+
+        $this->assertEquals('test.pdf', $attachment->get('name'));
+
+
+        $script = "ext\\pdf\\generate('Account', '{$a->id}', '{$template->id}')";
+        $id = $fm->run($script);
+
+        $attachment = $em->getEntity('Attachment', $id);
+
+        $this->assertEquals('1.pdf', $attachment->get('name'));
+    }
+
+    public function testEnvUserAttribute()
+    {
+        $fm = $this->getContainer()->get('formulaManager');
+        $user = $this->getContainer()->get('user');
+
+        $script = "env\\userAttribute('id')";
+        $id = $fm->run($script);
+        $this->assertEquals($id, $user->id);
     }
 }

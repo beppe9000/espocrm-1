@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/modals/select-records-with-categories', ['views/modals/select-records', 'views/list-with-categories'], function (Dep, List) {
+define('views/modals/select-records-with-categories', ['views/modals/select-records', 'views/list-with-categories'], function (Dep, List) {
 
     return Dep.extend({
 
@@ -55,8 +55,6 @@ Espo.define('views/modals/select-records-with-categories', ['views/modals/select
                                    !this.getAcl().checkScope(this.categoryScope);
 
             Dep.prototype.setup.call(this);
-
-
         },
 
         loadList: function () {
@@ -77,12 +75,12 @@ Espo.define('views/modals/select-records-with-categories', ['views/modals/select
                         collection: collection,
                         el: this.options.el + ' .categories-container',
                         selectable: true,
-                        createDisabled: true,
+                        readOnly: true,
                         showRoot: true,
                         rootName: this.translate(this.scope, 'scopeNamesPlural'),
                         buttonsDisabled: true,
                         checkboxes: false,
-                        isExpanded: this.isExpanded
+                        isExpanded: this.isExpanded,
                     }, function (view) {
                         if (this.isRendered()) {
                             view.render();
@@ -103,7 +101,7 @@ Espo.define('views/modals/select-records-with-categories', ['views/modals/select
 
                             this.applyCategoryToCollection();
 
-                            this.notify('Please wait...');
+                            Espo.Ui.notify(this.translate('loading', 'messages'));
                             this.listenToOnce(this.collection, 'sync', function () {
                                 this.notify(false);
                             }, this);

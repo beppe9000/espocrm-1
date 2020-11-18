@@ -29,35 +29,34 @@
 
 namespace Espo\Core\Formula\Functions\DatetimeGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class DiffType extends \Espo\Core\Formula\Functions\Base
+use DateTime;
+
+class DiffType extends BaseFunction
 {
-    protected function init()
+    protected $intevalTypePropertyMap = [
+        'years' => 'y',
+        'months' => 'm',
+        'days' => 'd',
+        'hours' => 'h',
+        'minutes' => 'i',
+        'seconds' => 's',
+    ];
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('dateTime');
-    }
+        $args = $this->evaluate($args);
 
-    protected $intevalTypePropertyMap = array(
-        'years' => 'y', 'months' => 'm', 'days' => 'd', 'hours' => 'h', 'minutes' => 'i', 'seconds' => 's'
-    );
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 2) {
-            throw new Error();
-        }
-
-        $dateTime1String = $this->evaluate($item->value[0]);
-        $dateTime2String = $this->evaluate($item->value[1]);
+        $dateTime1String = $args[0];
+        $dateTime2String = $args[1];
 
         if (!$dateTime1String) {
             return null;
@@ -68,26 +67,25 @@ class DiffType extends \Espo\Core\Formula\Functions\Base
         }
 
         if (!is_string($dateTime1String)) {
-            throw new Error();
+            $this->throwBadArgumentType(1, 'string');
         }
 
         if (!is_string($dateTime2String)) {
-            throw new Error();
+            $this->throwBadArgumentType(2, 'string');
         }
 
         $intervalType = 'days';
-        if (count($item->value) > 2) {
-            $intervalType = $this->evaluate($item->value[2]);
+        if (count($args) > 2) {
+            $intervalType = $args[2];
         }
 
         if (!is_string($intervalType)) {
-            throw new Error();
+            $this->throwBadArgumentType(3, 'string');
         }
 
         if (!array_key_exists($intervalType, $this->intevalTypePropertyMap)) {
-            throw new Error('Not supported interval type' . $intervalType);
+            $this->throwBadArgumentValue(3, "not supported interval type '{$intervalType}'");
         }
-
 
         $isTime = false;
         if (strlen($dateTime1String) > 10) {
@@ -95,8 +93,8 @@ class DiffType extends \Espo\Core\Formula\Functions\Base
         }
 
         try {
-            $dateTime1 = new \DateTime($dateTime1String);
-            $dateTime2 = new \DateTime($dateTime2String);
+            $dateTime1 = new DateTime($dateTime1String);
+            $dateTime2 = new DateTime($dateTime2String);
         } catch (\Exception $e) {
             return null;
         }

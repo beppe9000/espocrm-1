@@ -29,8 +29,8 @@
 
 namespace Espo\Controllers;
 
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\Error;
 
 class EmailAccount extends \Espo\Core\Controllers\Record
 {
@@ -39,7 +39,7 @@ class EmailAccount extends \Espo\Core\Controllers\Record
         return $this->getRecordService()->getFolders([
             'host' => $data->host ?? null,
             'port' => $data->port ?? null,
-            'ssl' =>  $data->ssl ?? false,
+            'security' =>  $data->security ?? null,
             'username' => $data->username ?? null,
             'password' => $data->password ?? null,
             'id' => $data->id ?? null,

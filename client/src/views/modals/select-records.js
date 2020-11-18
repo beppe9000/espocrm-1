@@ -57,7 +57,7 @@ define('views/modals/select-records', ['views/modal', 'search-manager'], functio
 
         events: {
             'click button[data-action="create"]': function () {
-        this.create();
+                this.create();
             },
             'click .list a': function (e) {
                 e.preventDefault();
@@ -143,8 +143,9 @@ define('views/modals/select-records', ['views/modal', 'search-manager'], functio
                 collection.maxSize = this.getConfig().get('recordsPerPageSmall') || 5;
                 this.collection = collection;
 
-                this.defaultOrderBy = collection.orderBy;
-                this.defaultOrder = collection.defaultOrder;
+                if (this.defaultOrderBy) {
+                    this.collection.setOrder(this.defaultOrderBy, this.defaultOrder || false, true);
+                }
 
                 this.loadSearch();
                 this.wait(true);
@@ -183,8 +184,6 @@ define('views/modals/select-records', ['views/modal', 'search-manager'], functio
                     disableSavePreset: true,
                 }, function (view) {
                     this.listenTo(view, 'reset', function () {
-                        this.collection.orderBy = this.defaultOrderBy;
-                        this.collection.order = this.defaultOrder;
                     }, this);
                 });
             }
@@ -257,6 +256,11 @@ define('views/modals/select-records', ['views/modal', 'search-manager'], functio
         },
 
         create: function () {
+            if (this.options.triggerCreateEvent) {
+                this.trigger('create');
+                return;
+            }
+
             var self = this;
 
             this.notify('Loading...');
@@ -286,4 +290,3 @@ define('views/modals/select-records', ['views/modal', 'search-manager'], functio
         },
     });
 });
-

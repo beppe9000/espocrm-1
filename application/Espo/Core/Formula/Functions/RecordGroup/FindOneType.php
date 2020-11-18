@@ -29,52 +29,50 @@
 
 namespace Espo\Core\Formula\Functions\RecordGroup;
 
-use Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class FindOneType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Di;
+
+class FindOneType extends BaseFunction implements
+    Di\EntityManagerAware,
+    Di\SelectManagerFactoryAware
 {
-    protected function init()
+    use Di\EntityManagerSetter;
+    use Di\SelectManagerFactorySetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('entityManager');
-        $this->addDependency('selectManagerFactory');
-    }
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (count($args) < 3) {
+            $this->throwTooFewArguments(3);
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
+        $entityType = $this->evaluate($args[0]);
+        $orderBy = $this->evaluate($args[1]);
+        $order = $this->evaluate($args[2]) ?? 'asc';
 
-        if (count($item->value) < 3) {
-            throw new Error();
-        }
-
-        $entityType = $this->evaluate($item->value[0]);
-        $orderBy = $this->evaluate($item->value[1]);
-        $order = $this->evaluate($item->value[2]) ?? 'asc';
-
-        $selectManager = $this->getInjection('selectManagerFactory')->create($entityType);
+        $selectManager = $this->selectManagerFactory->create($entityType);
         $selectParams = $selectManager->getEmptySelectParams();
 
-        if (count($item->value) <= 4) {
+        if (count($args) <= 4) {
             $filter = null;
-            if (count($item->value) == 4) {
-                $filter = $this->evaluate($item->value[3]);
+            if (count($args) == 4) {
+                $filter = $this->evaluate($args[3]);
             }
             if ($filter) {
-                if (!is_string($filter)) throw new Error("Formula record\\findOne: Bad filter.");
+                if (!is_string($filter)) {
+                    $this->throwBadArgumentType(4, 'string');
+                }
                 $selectManager->applyFilter($filter, $selectParams);
             }
         } else {
             $whereClause = [];
             $i = 3;
-            while ($i < count($item->value) - 1) {
-                $key = $this->evaluate($item->value[$i]);
-                $value = $this->evaluate($item->value[$i + 1]);
+            while ($i < count($args) - 1) {
+                $key = $this->evaluate($args[$i]);
+                $value = $this->evaluate($args[$i + 1]);
                 $whereClause[] = [$key => $value];
                 $i = $i + 2;
             }
@@ -85,9 +83,11 @@ class FindOneType extends \Espo\Core\Formula\Functions\Base
             $selectManager->applyOrder($orderBy, $order, $selectParams);
         }
 
-        $e = $this->getInjection('entityManager')->getRepository($entityType)->select(['id'])->findOne($selectParams);
+        $e = $this->entityManager->getRepository($entityType)->select(['id'])->findOne($selectParams);
 
-        if ($e) return $e->id;
+        if ($e) {
+            return $e->id;
+        }
 
         return null;
     }

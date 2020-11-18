@@ -29,8 +29,15 @@
 
 namespace Espo\Modules\Crm\SelectManagers;
 
-class Call extends \Espo\Core\SelectManagers\Base
+class Call extends \Espo\Core\Select\SelectManager
 {
+    protected $selectAttributesDependancyMap = [
+        'duration' => [
+            'dateStart',
+            'dateEnd',
+        ],
+    ];
+
     protected function accessOnlyOwn(&$result)
     {
         $this->setDistinct(true, $result);

@@ -42,10 +42,22 @@ define('views/fields/bool', 'views/fields/base', function (Dep) {
 
         validations: [],
 
+        initialSearchIsNotIdle: true,
+
         data: function () {
             var data = Dep.prototype.data.call(this);
             data.valueIsSet = this.model.has(this.name);
             return data;
+        },
+
+        afterRender: function () {
+            Dep.prototype.afterRender.call(this);
+
+            if (this.mode == 'search') {
+                this.$element.on('change', function () {
+                    this.trigger('change');
+                }.bind(this));
+            }
         },
 
         fetch: function () {
@@ -60,8 +72,16 @@ define('views/fields/bool', 'views/fields/base', function (Dep) {
 
             if (!type) return;
 
+            if (type === 'any') {
+                return {
+                    data: {
+                        type: type,
+                    },
+                };
+            }
+
             var data = {
-                type: type !== 'any' ? type : null,
+                type: type,
                 data: {
                     type: type,
                 },

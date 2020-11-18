@@ -31,9 +31,9 @@ namespace Espo\Modules\Crm\Repositories;
 
 use Espo\ORM\Entity;
 
-class Contact extends \Espo\Core\ORM\Repositories\RDB
+class Contact extends \Espo\Core\Repositories\Database
 {
-    public function afterSave(Entity $entity, array $options = array())
+    public function afterSave(Entity $entity, array $options = [])
     {
         $result = parent::afterSave($entity, $options);
         $this->handleAfterSaveAccounts($entity, $options);
@@ -45,7 +45,7 @@ class Contact extends \Espo\Core\ORM\Repositories\RDB
         return $result;
     }
 
-    protected function handleAfterSaveAccounts(Entity $entity, array $options = array())
+    protected function handleAfterSaveAccounts(Entity $entity, array $options = [])
     {
         $accountIdChanged = $entity->has('accountId') && $entity->get('accountId') != $entity->getFetched('accountId');
         $titleChanged = $entity->has('title') && $entity->get('title') != $entity->getFetched('title');
@@ -68,32 +68,29 @@ class Contact extends \Espo\Core\ORM\Repositories\RDB
         }
 
         if ($accountIdChanged || $titleChanged) {
-            $pdo = $this->getEntityManager()->getPDO();
+            $accountContact = $this->getEntityManager()->getRepository('AccountContact')
+                ->select(['role'])
+                ->where([
+                    'accountId' => $accountId,
+                    'contactId' => $entity->id,
+                    'deleted' => false,
+                ])
+                ->findOne();
 
-            $sql = "
-                SELECT id, role FROM account_contact
-                WHERE
-                    account_id = ".$pdo->quote($accountId)." AND
-                    contact_id = ".$pdo->quote($entity->id)." AND
-                    deleted = 0
-            ";
-            $sth = $pdo->prepare($sql);
-            $sth->execute();
-
-            if ($row = $sth->fetch()) {
-                if ($titleChanged && $entity->get('title') != $row['role']) {
-                    $this->updateRelation($entity, 'accounts', $accountId, array(
-                        'role' => $entity->get('title')
-                    ));
-                }
-            } else {
+            if (!$accountContact) {
                 if ($accountIdChanged) {
-                    $this->relate($entity, 'accounts', $accountId, array(
+                    $this->relate($entity, 'accounts', $accountId, [
                         'role' => $entity->get('title')
-                    ));
+                    ]);
                 }
+                return;
+            }
+
+            if ($titleChanged && $entity->get('title') != $accountContact->get('role')) {
+                $this->updateRelation($entity, 'accounts', $accountId, [
+                    'role' => $entity->get('title'),
+                ]);
             }
         }
     }
 }
-

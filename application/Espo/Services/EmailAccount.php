@@ -29,44 +29,76 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Laminas\Mail\Storage;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Zend\Mail\Storage;
+use Espo\ORM\Entity;
 
-class EmailAccount extends Record
+use Espo\Core\{
+    Exceptions\Error,
+    Exceptions\Forbidden,
+    Exceptions\BadRequest,
+    Mail\Importer,
+    Mail\MessageWrapper,
+    Mail\Mail\Storage\Imap,
+    Mail\Parsers\MailMimeParser,
+};
+
+use Espo\Entities\{
+    EmailAccount as EmailAccountEntity,
+    User,
+};
+
+use Espo\Core\Di;
+
+use RecursiveIteratorIterator;
+use Exception;
+use Throwable;
+use DateTime;
+use DateTimeZone;
+use StdClass;
+
+class EmailAccount extends Record implements
+
+    Di\CryptAware,
+    Di\NotificatorFactoryAware
 {
-    protected $storageClassName = '\\Espo\\Core\\Mail\\Mail\\Storage\\Imap';
+    use Di\CryptSetter;
+    use Di\NotificatorFactorySetter;
+
+    protected $storageClassName = Imap::class;
+
+    protected $parserClassName = MailMimeParser::class;
 
     const PORTION_LIMIT = 10;
-
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('crypt');
-        $this->addDependency('notificatorFactory');
-    }
-
-    protected function getCrypt()
-    {
-        return $this->getInjection('crypt');
-    }
 
     protected function handleInput($data)
     {
         parent::handleInput($data);
+
         if (property_exists($data, 'password')) {
-            $data->password = $this->getCrypt()->encrypt($data->password);
+            $data->password = $this->crypt->encrypt($data->password);
         }
+
         if (property_exists($data, 'smtpPassword')) {
-            $data->smtpPassword = $this->getCrypt()->encrypt($data->smtpPassword);
+            $data->smtpPassword = $this->crypt->encrypt($data->smtpPassword);
+        }
+    }
+
+    public function processValidation(Entity $entity, $data)
+    {
+        parent::processValidation($entity, $data);
+
+        if ($entity->get('useImap')) {
+            if (!$entity->get('fetchSince')) {
+                throw new BadRequest("EmailAccount validation: fetchSince is required.");
+            }
         }
     }
 
     public function getFolders($params)
     {
         $userId = $params['userId'] ?? null;
+
         if ($userId) {
             if (!$this->getUser()->isAdmin() && $userId !== $this->getUser()->id) {
                 throw new Forbidden();
@@ -78,7 +110,8 @@ class EmailAccount extends Record
         if (!empty($params['id'])) {
             $entity = $this->getEntityManager()->getEntity('EmailAccount', $params['id']);
             if ($entity) {
-                $params['password'] = $this->getCrypt()->decrypt($entity->get('password'));
+                $params['password'] = $this->crypt->decrypt($entity->get('password'));
+                $params['imapHandler'] = $entity->get('imapHandler');
             }
         }
 
@@ -86,18 +119,28 @@ class EmailAccount extends Record
 
         $foldersArr = [];
 
-        $folders = new \RecursiveIteratorIterator($storage->getFolders(), \RecursiveIteratorIterator::SELF_FIRST);
+        $folders = new RecursiveIteratorIterator($storage->getFolders(), RecursiveIteratorIterator::SELF_FIRST);
+
         foreach ($folders as $name => $folder) {
             $foldersArr[] = mb_convert_encoding($folder->getGlobalName(), 'UTF-8', 'UTF7-IMAP');
         }
+
         return $foldersArr;
     }
 
     public function testConnection(array $params)
     {
+        if (!empty($params['id'])) {
+            $account = $this->getEntityManager()->getEntity('EmailAccount', $params['id']);
+            if ($account) {
+                $params['imapHandler'] = $account->get('imapHandler');
+            }
+        }
+
         $storage = $this->createStorage($params);
 
         $userId = $params['userId'] ?? null;
+
         if ($userId) {
             if (!$this->getUser()->isAdmin() && $userId !== $this->getUser()->id) {
                 throw new Forbidden();
@@ -113,24 +156,48 @@ class EmailAccount extends Record
     protected function createStorage(array $params)
     {
         $emailAddress = $params['emailAddress'] ?? null;
+
         $userId = $params['userId'] ?? null;
 
         $handler = null;
 
         $imapParams = null;
 
-        if ($emailAddress && $userId) {
+        $handlerClassName = $params['imapHandler'] ?? null;
+
+        if ($handlerClassName && !empty($params['id'])) {
+            try {
+                $handler = $this->injectableFactory->create($handlerClassName);
+            } catch (Throwable $e) {
+                $GLOBALS['log']->error(
+                    "EmailAccount: Could not create Imap Handler. Error: " . $e->getMessage()
+                );
+            }
+
+            if (method_exists($handler, 'prepareProtocol')) {
+                // for backward compatibility
+                $params['ssl'] = $params['security'];
+
+                $imapParams = $handler->prepareProtocol($params['id'], $params);
+            }
+        }
+
+        if ($emailAddress && $userId && !$handlerClassName) {
             $emailAddress = strtolower($emailAddress);
+
             $userData = $this->getEntityManager()->getRepository('UserData')->getByUserId($userId);
+
             if ($userData) {
                 $imapHandlers = $userData->get('imapHandlers') ?? (object) [];
                 if (is_object($imapHandlers)) {
                     if (isset($imapHandlers->$emailAddress)) {
                         $handlerClassName = $imapHandlers->$emailAddress;
                         try {
-                            $handler = $this->getInjection('injectableFactory')->createByClassName($handlerClassName);
-                        } catch (\Throwable $e) {
-                            $GLOBALS['log']->error("EmailAccount: Could not create Imap Handler for {$emailAddress}. Error: " . $e->getMessage());
+                            $handler = $this->injectableFactory->create($handlerClassName);
+                        } catch (Throwable $e) {
+                            $GLOBALS['log']->error(
+                                "EmailAccount: Could not create Imap Handler for {$emailAddress}. Error: " . $e->getMessage()
+                            );
                         }
                         if (method_exists($handler, 'prepareProtocol')) {
                             $imapParams = $handler->prepareProtocol($userId, $emailAddress, $params);
@@ -147,8 +214,9 @@ class EmailAccount extends Record
                 'user' => $params['username'],
                 'password' => $params['password'],
             ];
-            if (!empty($params['ssl'])) {
-                $imapParams['ssl'] = 'SSL';
+
+            if (!empty($params['security'])) {
+                $imapParams['ssl'] = $params['security'];
             }
         }
 
@@ -157,12 +225,13 @@ class EmailAccount extends Record
         return $storage;
     }
 
-    public function create($data)
+    public function create(StdClass $data) : Entity
     {
         if (!$this->getUser()->isAdmin()) {
-            $count = $this->getEntityManager()->getRepository('EmailAccount')->where(array(
+            $count = $this->getEntityManager()->getRepository('EmailAccount')->where([
                 'assignedUserId' => $this->getUser()->id
-            ))->count();
+            ])->count();
+
             if ($count >= $this->getConfig()->get('maxEmailAccountCount', \PHP_INT_MAX)) {
                 throw new Forbidden();
             }
@@ -175,6 +244,7 @@ class EmailAccount extends Record
             }
             $this->getEntityManager()->saveEntity($entity);
         }
+
         return $entity;
     }
 
@@ -196,14 +266,17 @@ class EmailAccount extends Record
             'host' => $emailAccount->get('host'),
             'port' => $emailAccount->get('port'),
             'username' => $emailAccount->get('username'),
-            'password' => $this->getCrypt()->decrypt($emailAccount->get('password')),
+            'password' => $this->crypt->decrypt($emailAccount->get('password')),
             'emailAddress' => $emailAccount->get('emailAddress'),
             'userId' => $emailAccount->get('assignedUserId'),
         ];
 
-        if ($emailAccount->get('ssl')) {
-            $params['ssl'] = true;
+        if ($emailAccount->get('security')) {
+            $params['security'] = $emailAccount->get('security');
         }
+
+        $params['imapHandler'] = $emailAccount->get('imapHandler');
+        $params['id'] = $emailAccount->id;
 
         $storage = $this->createStorage($params);
 
@@ -216,9 +289,9 @@ class EmailAccount extends Record
             throw new Error("Email Account {$emailAccount->id} is not active.");
         }
 
-        $notificator = $this->getInjection('notificatorFactory')->create('Email');
+        $notificator = $this->notificatorFactory->create('Email');
 
-        $importer = new \Espo\Core\Mail\Importer($this->getEntityManager(), $this->getConfig(), $notificator);
+        $importer = new Importer($this->getEntityManager(), $this->getConfig(), $notificator, $this->parserClassName);
 
         $maxSize = $this->getConfig()->get('emailMessageMaxSize');
 
@@ -272,8 +345,6 @@ class EmailAccount extends Record
             throw new Error();
         }
 
-        $parserName = 'MailMimeParser';
-        $parserClassName = '\\Espo\\Core\\Mail\\Parsers\\' . $parserName;
 
         $monitoredFoldersArr = explode(',', $monitoredFolders);
 
@@ -284,8 +355,10 @@ class EmailAccount extends Record
 
             try {
                 $storage->selectFolder($folder);
-            } catch (\Exception $e) {
-                $GLOBALS['log']->error('EmailAccount '.$emailAccount->id.' (Select Folder) [' . $e->getCode() . '] ' .$e->getMessage());
+            } catch (Exception $e) {
+                $GLOBALS['log']->error(
+                    'EmailAccount '.$emailAccount->id.' (Select Folder) [' . $e->getCode() . '] ' .$e->getMessage()
+                );
                 continue;
             }
 
@@ -316,8 +389,8 @@ class EmailAccount extends Record
 
                 $dt = null;
                 try {
-                    $dt = new \DateTime($fetchSince);
-                } catch (\Exception $e) {}
+                    $dt = new DateTime($fetchSince);
+                } catch (Exception $e) {}
 
                 if ($dt) {
                     $idList = $storage->getIdsFromDate($dt->format('d-M-Y'));
@@ -355,21 +428,21 @@ class EmailAccount extends Record
 
                 $folderData = null;
                 if ($emailAccount->get('emailFolderId')) {
-                    $folderData = array();
+                    $folderData = [];
                     $folderData[$userId] = $emailAccount->get('emailFolderId');
                 }
 
                 $message = null;
                 $email = null;
                 try {
-                    $parser = new $parserClassName($this->getEntityManager());
-                    $message = new \Espo\Core\Mail\MessageWrapper($storage, $id, $parser);
+                    $parser = new $this->parserClassName($this->getEntityManager());
+                    $message = new MessageWrapper($storage, $id, $parser);
 
                     if ($message->isFetched() && $emailAccount->get('keepFetchedEmailsUnread')) {
                         $flags = $message->getFlags();
                     }
 
-                    $email = $this->importMessage($parserName, $importer, $emailAccount, $message, $teamIdList, null, [$userId], $filterCollection, $fetchOnlyHeader, $folderData);
+                    $email = $this->importMessage($importer, $emailAccount, $message, $teamIdList, null, [$userId], $filterCollection, $fetchOnlyHeader, $folderData);
 
                     if ($emailAccount->get('keepFetchedEmailsUnread')) {
                         if (is_array($flags) && empty($flags[Storage::FLAG_SEEN])) {
@@ -378,8 +451,11 @@ class EmailAccount extends Record
                         }
                     }
 
-                } catch (\Exception $e) {
-                    $GLOBALS['log']->error('EmailAccount '.$emailAccount->id.' (Get Message w/ parser '.$parserName.'): [' . $e->getCode() . '] ' .$e->getMessage());
+                } catch (Throwable $e) {
+                    $GLOBALS['log']->error(
+                        'EmailAccount '.$emailAccount->id.
+                        ' (Get Message): [' . $e->getCode() . '] ' .$e->getMessage()
+                    );
                 }
 
                 if (!empty($email)) {
@@ -395,15 +471,15 @@ class EmailAccount extends Record
                     if ($email && $email->get('dateSent')) {
                         $dt = null;
                         try {
-                            $dt = new \DateTime($email->get('dateSent'));
-                        } catch (\Exception $e) {}
+                            $dt = new DateTime($email->get('dateSent'));
+                        } catch (Exception $e) {}
 
                         if ($dt) {
-                            $nowDt = new \DateTime();
+                            $nowDt = new DateTime();
                             if ($dt->getTimestamp() >= $nowDt->getTimestamp()) {
                                 $dt = $nowDt;
                             }
-                            $dateSent = $dt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+                            $dateSent = $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
                             $lastDate = $dateSent;
                         }
                     }
@@ -415,7 +491,7 @@ class EmailAccount extends Record
             }
 
             if ($forceByDate) {
-                $nowDt = new \DateTime();
+                $nowDt = new DateTime();
                 $lastDate = $nowDt->format('Y-m-d H:i:s');
             }
 
@@ -448,15 +524,34 @@ class EmailAccount extends Record
         return true;
     }
 
-    protected function importMessage($parserName, $importer, $emailAccount, $message, $teamIdList, $userId = null, $userIdList = [], $filterCollection, $fetchOnlyHeader, $folderData = null)
-    {
+    protected function importMessage(
+        $importer,
+        $emailAccount,
+        $message,
+        $teamIdList,
+        $userId = null,
+        $userIdList = [],
+        $filterCollection,
+        $fetchOnlyHeader,
+        $folderData = null
+    ) {
         $email = null;
+
         try {
-            $email = $importer->importMessage($parserName, $message, $userId, $teamIdList, $userIdList, $filterCollection, $fetchOnlyHeader, $folderData);
-        } catch (\Exception $e) {
-            $GLOBALS['log']->error('EmailAccount '.$emailAccount->id.' (Import Message w/ '.$parserName.'): [' . $e->getCode() . '] ' .$e->getMessage());
-            $this->getEntityManager()->getPdo()->query('UNLOCK TABLES');
+            $email = $importer->importMessage(
+                $message, $userId, $teamIdList, $userIdList, $filterCollection, $fetchOnlyHeader, $folderData
+            );
+        } catch (Exception $e) {
+            $GLOBALS['log']->error(
+                'EmailAccount '.$emailAccount->id.' (Import Message): [' . $e->getCode() . '] ' .
+                $e->getMessage()
+            );
+
+            if ($this->getEntityManager()->getLocker()->isLocked()) {
+                $this->getEntityManager()->getLocker()->rollback();
+            }
         }
+
         return $email;
     }
 
@@ -471,7 +566,7 @@ class EmailAccount extends Record
         }
     }
 
-    public function findAccountForUser(\Espo\Entities\User $user, $address)
+    public function findAccountForUser(User $user, $address)
     {
         $emailAccount = $this->getEntityManager()->getRepository('EmailAccount')->where([
             'emailAddress' => $address,
@@ -482,7 +577,7 @@ class EmailAccount extends Record
         return $emailAccount;
     }
 
-    public function getSmtpParamsFromAccount(\Espo\Entities\EmailAccount $emailAccount)
+    public function getSmtpParamsFromAccount(EmailAccountEntity $emailAccount) : ?array
     {
         $smtpParams = [];
         $smtpParams['server'] = $emailAccount->get('smtpHost');
@@ -493,13 +588,33 @@ class EmailAccount extends Record
             if ($emailAccount->get('smtpAuth')) {
                 $smtpParams['username'] = $emailAccount->get('smtpUsername');
                 $smtpParams['password'] = $emailAccount->get('smtpPassword');
-                $smtpParams['smtpAuthMechanism'] = $emailAccount->get('smtpAuthMechanism');
+                $smtpParams['authMechanism'] = $emailAccount->get('smtpAuthMechanism');
             }
             if (array_key_exists('password', $smtpParams)) {
-                $smtpParams['password'] = $this->getCrypt()->decrypt($smtpParams['password']);
+                $smtpParams['password'] = $this->crypt->decrypt($smtpParams['password']);
             }
+
+            $this->applySmtpHandler($emailAccount, $smtpParams);
+
             return $smtpParams;
         }
-        return;
+        return null;
+    }
+
+    public function applySmtpHandler(EmailAccountEntity $emailAccount, array &$params)
+    {
+        $handlerClassName = $emailAccount->get('smtpHandler');
+        if (!$handlerClassName) return;
+
+        try {
+            $handler = $this->injectableFactory->create($handlerClassName);
+        } catch (Throwable $e) {
+            $GLOBALS['log']->error(
+                "EmailAccount: Could not create Smtp Handler for account {$emailAccount->id}. Error: " . $e->getMessage()
+            );
+        }
+        if (method_exists($handler, 'applyParams')) {
+            $handler->applyParams($emailAccount->id, $params);
+        }
     }
 }

@@ -146,6 +146,11 @@ define('crm:views/record/panels/activities', ['views/record/panels/relationship'
             this.collection.maxSize = this.getConfig().get('recordsPerPageSmall') || 5;
 
             this.setFilter(this.filter);
+
+            this.once('show', function () {
+                if (!this.isRendered() && !this.isBeingRendered())
+                this.collection.fetch();
+            }, this);
         },
 
         translateFilter: function (name) {
@@ -313,6 +318,15 @@ define('crm:views/record/panels/activities', ['views/record/panels/relationship'
                         attributes.parentType = 'Account',
                         attributes.parentId = this.model.get('accountId');
                         attributes.parentName = this.model.get('accountName');
+                        if (
+                            scope &&
+                            !this.getMetadata().get(['entityDefs', scope, 'links', 'contacts']) &&
+                            !this.getMetadata().get(['entityDefs', scope, 'links', 'contact'])
+                        ) {
+                            delete attributes.parentType;
+                            delete attributes.parentId;
+                            delete attributes.parentName;
+                        }
                     }
                 } else if (this.model.name == 'Lead') {
                     attributes.parentType = 'Lead',
@@ -540,7 +554,7 @@ define('crm:views/record/panels/activities', ['views/record/panels/relationship'
         actionViewRelatedList: function (data) {
             data.url = 'Activities/' + this.model.name + '/' + this.model.id + '/' + this.name + '/list/' + data.scope;
             data.title = this.translate(this.defs.label) +
-            ' <span class="chevron-right"></span> ' + this.translate(data.scope, 'scopeNamesPlural');
+            ' @right ' + this.translate(data.scope, 'scopeNamesPlural');
 
             data.viewOptions = data.viewOptions || {};
             data.viewOptions.massUnlinkDisabled = true;

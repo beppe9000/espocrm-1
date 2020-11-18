@@ -29,25 +29,33 @@
 
 namespace Espo\SelectManagers;
 
-class Attachment extends \Espo\Core\SelectManagers\Base
+class Attachment extends \Espo\Core\Select\SelectManager
 {
     protected function filterOrphan(&$result)
     {
         $result['whereClause'][] = [
             'role' => ['Attachment', 'Inline Attachment'],
-            'OR' => [
-                [
-                    'parentId' => null,
-                    'parentType!=' => null,
-                    'relatedType=' => null
+            [
+                'OR' => [
+                    [
+                        'parentId' => null,
+                        'parentType!=' => null,
+                        'relatedType=' => null,
+                    ],
+                    [
+                        'parentType' => null,
+                        'relatedId' => null,
+                        'relatedType!=' => null,
+                    ],
                 ],
-                [
-                    'parentType' => null,
-                    'relatedId' => null,
-                    'relatedType!=' => null
-                ]
             ],
-            'attachmentChild.id' => null
+            [
+                'OR' => [
+                    'relatedType!=' => 'Settings',
+                    'relatedType=' => null,
+                ],
+            ],
+            'attachmentChild.id' => null,
         ];
 
         $this->addLeftJoin(['Attachment', 'attachmentChild', [

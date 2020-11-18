@@ -29,7 +29,14 @@
 
 namespace Espo\Core\Utils\Cron;
 
-class JobTask extends \Spatie\Async\Task
+use Espo\Core\{
+    Application,
+    ApplicationRunners\Job as JobRunner,
+};
+
+use Spatie\Async\Task as AsyncTask;
+
+class JobTask extends AsyncTask
 {
     private $jobId;
 
@@ -44,9 +51,11 @@ class JobTask extends \Spatie\Async\Task
 
     public function run()
     {
-        $app = new \Espo\Core\Application();
+        $app = new Application();
         try {
-            $app->runJob($this->jobId);
+            $app->run(JobRunner::class, (object) [
+                'id' => $this->jobId,
+            ]);
         } catch (\Throwable $e) {
             $GLOBALS['log']->error("JobTask: Failed job run. Job id: ".$this->jobId.". Error details: ".$e->getMessage());
         }

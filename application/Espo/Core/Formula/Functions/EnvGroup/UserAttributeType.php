@@ -29,36 +29,30 @@
 
 namespace Espo\Core\Formula\Functions\EnvGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class UserAttributeType extends \Espo\Core\Formula\Functions\AttributeType
+use Espo\Core\Di;
+
+class UserAttributeType extends BaseFunction implements
+    Di\UserAware
 {
-    protected function init()
+    use Di\UserSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('user');
-    }
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 1) {
-            throw new Error();
-        }
-
-        $attribute = $this->evaluate($item->value[0]);
+        $attribute = $this->evaluate($args[0]);
 
         if (!is_string($attribute)) {
-            throw new Error();
+            $this->throwBadArgumentType(1, 'string');
         }
 
-        return $this->getInjection('user')->get($attribute);
+        return $this->user->get($attribute);
     }
 }

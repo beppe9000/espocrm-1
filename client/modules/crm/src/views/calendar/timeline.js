@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, Vis) {
+define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, Vis) {
 
     return Dep.extend({
 
@@ -140,8 +140,8 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
 
             this.colors = Espo.Utils.clone(this.getMetadata().get('clientDefs.Calendar.colors') || this.colors || {});
             this.modeList = this.getMetadata().get('clientDefs.Calendar.modeList') || this.modeList || [];
-            this.canceledStatusList = this.getMetadata().get('clientDefs.Calendar.canceledStatusList') || this.canceledStatusList || [];
-            this.completedStatusList = this.getMetadata().get('clientDefs.Calendar.completedStatusList') || this.completedStatusList || [];
+            this.canceledStatusList = this.getMetadata().get('app.calendar.canceledStatusList') || this.canceledStatusList || [];
+            this.completedStatusList = this.getMetadata().get('app.calendar.completedStatusList') || this.completedStatusList || [];
             this.scopeList = this.getConfig().get('calendarEntityList') || Espo.Utils.clone(this.scopeList) || [];
             this.allDayScopeList = this.getMetadata().get('clientDefs.Calendar.allDayScopeList') || this.allDayScopeList || [];
 
@@ -393,7 +393,9 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
                     status: o.status,
                     'date-start': o.dateStart,
                     'date-end': o.dateEnd,
-                    type: 'range'
+                    type: 'range',
+                    className: 'clickable',
+                    color: o.color,
                 };
             }
 
@@ -445,7 +447,10 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
 
         fillColor: function (event) {
             var color = this.colors[event.scope];
-            var d = event.dateEnd;
+
+            if (event.color) {
+                color = event.color;
+            }
 
             if (!color) {
                 color = this.getColorFromScopeName(event.scope);
@@ -466,9 +471,7 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
 
         handleStatus: function (event) {
             if (~this.canceledStatusList.indexOf(event.status)) {
-                event.className = 'event-canceled';
-            } else {
-                event.className = '';
+                event.className += ' event-canceled';
             }
         },
 
@@ -544,7 +547,13 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
                             time: this.translate('time', 'labels', 'Calendar')
                         }
                     },
-                    locale: 'mylocale'
+                    locale: 'mylocale',
+                    margin: {
+                        item: {
+                            vertical: 12,
+                        },
+                        axis: 6,
+                    },
                 });
 
                 timeline.on('click', function (e) {
@@ -882,8 +891,6 @@ Espo.define('crm:views/calendar/timeline', ['view', 'lib!vis'], function (Dep, V
                         item.userId = userId;
                         eventList.push(item);
                     }, this);
-
-                    if (userId == this.getUser().id && !this.isBusyRangesMode) continue;
 
                     var userBusyRangeList = data[userId].busyRangeList;
                     userBusyRangeList.forEach(function (item) {

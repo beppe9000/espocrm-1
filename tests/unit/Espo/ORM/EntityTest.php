@@ -27,10 +27,17 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-use Espo\ORM\DB\MysqlMapper;
-use Espo\ORM\DB\Query\Mysql as Query;
-use Espo\ORM\EntityFactory;
+namespace tests\unit\Espo\ORM;
 
+use Espo\ORM\{
+    DB\MysqlMapper,
+    DB\Query\Mysql as Query,
+    EntityFactory,
+};
+
+use tests\unit\testData\DB\Job;
+
+use Espo\Core\ORM\EntityManager;
 
 require_once 'tests/unit/testData/DB/Entities.php';
 
@@ -44,42 +51,49 @@ class EntityTest extends \PHPUnit\Framework\TestCase
     {
     }
 
+    protected function createEntity(string $entityType, string $className)
+    {
+        $em = $this->getMockBuilder(EntityManager::class)->disableOriginalConstructor()->getMock();
+        $entity = new $className($entityType, [], $em);
+
+        return $entity;
+    }
 
     public function testIsAttributeChanged()
     {
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('string', 'test');
         $this->assertFalse($job->isAttributeChanged('string'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('string', 'test');
         $job->set('string', 'hello');
         $this->assertTrue($job->isAttributeChanged('string'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->set('string', 'hello');
         $this->assertTrue($job->isAttributeChanged('string'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->set('string', null);
         $this->assertTrue($job->isAttributeChanged('string'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', ['1', '2']);
         $job->set('array', ['2', '1']);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', ['1', '2']);
         $job->set('array', ['1', '2']);
         $this->assertFalse($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', ['1', '2']);
         $job->set('array', ['1', 2]);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', [
             (object) ['1' => 'v1']
         ]);
@@ -88,7 +102,7 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         ]);
         $this->assertFalse($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', [
             (object) ['k1' => 'v1']
         ]);
@@ -97,7 +111,7 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         ]);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->set('array', [
             (object) ['k1' => 'v1']
         ]);
@@ -107,7 +121,7 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         ]);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $v = [
             (object) ['k1' => 'v1']
         ];
@@ -116,59 +130,59 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         $job->set('array', $v);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', ['1', '2']);
         $job->set('array', ['1', '2', '3']);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->set('array', ['1', '2', '3']);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->set('array', null);
         $this->assertTrue($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('array', null);
         $this->assertFalse($job->isAttributeChanged('array'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('arrayUnordered', ['1', '2']);
         $job->set('arrayUnordered', ['2', '1']);
         $this->assertFalse($job->isAttributeChanged('arrayUnordered'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('arrayUnordered', ['1', '2']);
         $job->set('arrayUnordered', ['1', '2']);
         $this->assertFalse($job->isAttributeChanged('arrayUnordered'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('arrayUnordered', ['1', '2']);
         $job->set('arrayUnordered', ['1', '2', '3']);
         $this->assertTrue($job->isAttributeChanged('arrayUnordered'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('arrayUnordered', ['1', '2']);
         $job->set('arrayUnordered', null);
         $this->assertTrue($job->isAttributeChanged('arrayUnordered'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', (object) ['a1' => 'value-1']);
         $job->set('object', (object) ['a1' => 'value-1']);
         $this->assertFalse($job->isAttributeChanged('object'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', (object) ['a1' => 'value-1']);
         $job->set('object', ['a1' => 'value-1']);
         $this->assertTrue($job->isAttributeChanged('object'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', (object) ['1' => '1']);
         $job->set('object', (object) ['1' => 1]);
         $this->assertTrue($job->isAttributeChanged('object'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', (object) [
             'k1' => (object) [
                 'k11' => 'v1'
@@ -181,7 +195,7 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         ]);
         $this->assertTrue($job->isAttributeChanged('object'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', (object) [
             'k1' => [
                 'k11' => 'v1'
@@ -194,7 +208,7 @@ class EntityTest extends \PHPUnit\Framework\TestCase
         ]);
         $this->assertTrue($job->isAttributeChanged('object'));
 
-        $job = new \Espo\Entities\Job();
+        $job = $this->createEntity('Job', Job::class);
         $job->setFetched('object', [
             'k1' => [
                 'k11' => 'v1'

@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/fields/phone', 'views/fields/varchar', function (Dep) {
+define('views/fields/phone', 'views/fields/varchar', function (Dep) {
 
     return Dep.extend({
 
@@ -103,22 +103,28 @@ Espo.define('views/fields/phone', 'views/fields/varchar', function (Dep) {
             if (phoneNumberData) {
                 phoneNumberData = Espo.Utils.cloneDeep(phoneNumberData);
                 phoneNumberData.forEach(function (item) {
-                    item.erased = item.phoneNumber.indexOf(this.erasedPlaceholder) === 0;
+                    var number = item.phoneNumber || '';
+                    item.erased = number.indexOf(this.erasedPlaceholder) === 0;
                     if (!item.erased) {
-                        item.valueForLink = item.phoneNumber.replace(/ /g, '');
+                        item.valueForLink = number.replace(/ /g, '');
                     }
                     item.lineThrough = item.optOut || item.invalid || this.model.get('doNotCall');
                 }, this);
             }
 
             if ((!phoneNumberData || phoneNumberData.length === 0) && this.model.get(this.name)) {
+                var number = this.model.get(this.name);
+
                 var o = {
-                    phoneNumber: this.model.get(this.name),
-                    primary: true
+                    phoneNumber: number,
+                    primary: true,
+                    valueForLink: number.replace(/ /g, ''),
                 };
+
                 if (this.mode === 'edit' && this.model.isNew()) {
                     o.type = this.defaultType;
                 }
+
                 phoneNumberData = [o];
             }
 

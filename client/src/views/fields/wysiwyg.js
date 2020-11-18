@@ -44,6 +44,8 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
 
         seeMoreDisabled: true,
 
+        fetchEmptyValueAsNull: false,
+
         setup: function () {
             Dep.prototype.setup.call(this);
 
@@ -63,39 +65,7 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
 
             this.useIframe = this.params.useIframe || this.useIframe;
 
-            this.toolbar = this.params.toolbar || this.toolbar || [
-                ['style', ['style']],
-                ['style', ['bold', 'italic', 'underline', 'clear']],
-                ['fontsize', ['fontsize']],
-                ['color', ['color']],
-                ['para', ['ul', 'ol', 'paragraph']],
-                ['height', ['height']],
-                ['table', ['table', 'espoLink', 'espoImage', 'hr']],
-                ['misc', ['codeview', 'fullscreen']]
-            ];
-
-            this.buttons = {};
-
-            if (!this.params.toolbar) {
-                if (this.params.attachmentField) {
-                    this.toolbar.push([
-                        'attachment',
-                        ['attachment']
-                    ]);
-                    var AttachmentButton = function (context) {
-                        var ui = $.summernote.ui;
-                        var button = ui.button({
-                            contents: '<i class="fas fa-paperclip"></i>',
-                            tooltip: this.translate('Attach File'),
-                            click: function () {
-                                this.attachFile();
-                            }.bind(this)
-                        });
-                        return button.render();
-                    }.bind(this);
-                    this.buttons['attachment'] = AttachmentButton;
-                }
-            }
+            this.setupToolbar();
 
             this.listenTo(this.model, 'change:isHtml', function (model, value, o) {
                 if (o.ui && this.mode == 'edit') {
@@ -155,6 +125,48 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
             'click .note-editable': function () {
                 this.fixPopovers();
             },
+        },
+
+        setupToolbar: function () {
+            this.buttons = {};
+
+            this.toolbar = this.params.toolbar || this.toolbar || [
+                ['style', ['style']],
+                ['style', ['bold', 'italic', 'underline', 'clear']],
+                ['fontsize', ['fontsize']],
+                ['color', ['color']],
+                ['para', ['ul', 'ol', 'paragraph']],
+                ['height', ['height']],
+                ['table', ['table', 'espoLink', 'espoImage', 'hr']],
+                ['misc', ['codeview', 'fullscreen']]
+            ];
+
+            if (!this.params.toolbar) {
+                if (this.params.attachmentField) {
+                    this.toolbar.push([
+                        'attachment',
+                        ['attachment']
+                    ]);
+                    var AttachmentButton = function (context) {
+                        var ui = $.summernote.ui;
+                        var button = ui.button({
+                            contents: '<i class="fas fa-paperclip"></i>',
+                            tooltip: this.translate('Attach File'),
+                            click: function () {
+                                this.attachFile();
+
+                                this.listenToOnce(this.model, 'attachment-uploaded:attachments', function () {
+                                    if (this.mode === 'edit') {
+                                        Espo.Ui.success(this.translate('Attached'));
+                                    }
+                                }, this);
+                            }.bind(this)
+                        });
+                        return button.render();
+                    }.bind(this);
+                    this.buttons['attachment'] = AttachmentButton;
+                }
+            }
         },
 
         isPlain: function () {
@@ -340,6 +352,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                             });
                         }, 40);
 
+                        if (!this.model.get(this.name)) {
+                            $iframe.addClass('hidden');
+                        }
+
                         var windowWidth = $(window).width();
                         $(window).off('resize.' + this.cid);
                         $(window).on('resize.' + this.cid, function() {
@@ -448,6 +464,18 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
 
             this.$toolbar = this.$el.find('.note-toolbar');
             this.$area = this.$el.find('.note-editing-area');
+
+            this.$area.on('paste', function (e) {
+                var items = e.originalEvent.clipboardData.items;
+                if (items) {
+                    for (var i = 0; i < items.length; i++) {
+                        if (!~items[i].type.indexOf('image')) continue;
+                        var blob = items[i].getAsFile();
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                }
+            }.bind(this));
         },
 
         destroySummernote: function () {
@@ -506,6 +534,12 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                 data[this.name] = code;
             } else {
                 data[this.name] = this.$element.val();
+
+                if (this.fetchEmptyValueAsNull) {
+                    if (!data[this.name]) {
+                        data[this.name] = null;
+                    }
+                }
             }
 
             if (this.model.has('isHtml') && this.hasBodyPlainField) {
@@ -598,6 +632,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                     var self = options.espoView;
                     var lang = options.langInfo;
 
+                    if (!self) {
+                        return;
+                    }
+
                     context.memo('button.espoImage', function () {
                         var button = ui.button({
                             contents: options.espoImage.icon,
@@ -647,6 +685,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                     var self = options.espoView;
                     var lang = options.langInfo;
 
+                    if (!self) {
+                        return;
+                    }
+
                     this.show = function () {
                         var linkInfo = context.invoke('editor.getLinkInfo');
 
@@ -679,6 +721,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                     var self = options.espoView;
                     var lang = options.langInfo;
 
+                    if (!self) {
+                        return;
+                    }
+
                     var isMacLike = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
 
                     context.memo('button.espoLink', function () {
@@ -695,7 +741,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                     this.initialize = function () {};
 
                     this.destroy = function () {
-                        if (!self) return;
+                        if (!self) {
+                            return;
+                        }
+
                         self.clearView('dialogInsertLink');
                     }
 
@@ -730,6 +779,10 @@ define('views/fields/wysiwyg', ['views/fields/text', 'lib!Summernote'], function
                     var options = context.options;
                     var self = options.espoView;
                     var lang = options.langInfo;
+
+                    if (!self) {
+                        return;
+                    }
 
                     this.$window = $(window);
                     this.$scrollbar = $('html, body');

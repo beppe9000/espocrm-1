@@ -29,16 +29,26 @@
 
 namespace Espo\Core\Acl;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Error;
 
-use \Espo\ORM\Entity;
-use \Espo\Entities\User;
+use Espo\Entities\User;
 
-use \Espo\Core\Utils\Config;
-use \Espo\Core\Utils\Metadata;
-use \Espo\Core\Utils\FieldManagerUtil;
-use \Espo\Core\Utils\File\Manager as FileManager;
+use Espo\Core\{
+    ORM\EntityManager,
+    ORM\Entity,
+    Utils\Config,
+    Utils\Metadata,
+    Utils\FieldUtil,
+    Utils\DataCache,
+};
 
+use StdClass;
+use Traversable;
+
+/**
+ * A table is generated for each user. Multiple roles are merged into a single table.
+ * This table is used for access checking.
+ */
 class Table
 {
     protected $type = 'acl';
@@ -47,7 +57,7 @@ class Table
 
     private $data = null;
 
-    protected $cacheFilePath;
+    protected $cacheKey;
 
     protected $actionList = ['read', 'stream', 'edit', 'delete', 'create'];
 
@@ -59,26 +69,35 @@ class Table
 
     protected $fieldLevelList = ['yes', 'no'];
 
-    protected $valuePermissionHighestLevels = array();
+    protected $valuePermissionHighestLevels = [];
 
     protected $valuePermissionList = [];
 
-    private $fileManager;
+    protected $forbiddenAttributesCache = [];
 
-    private $metadata;
-
-    private $fieldManager;
-
-    protected $forbiddenAttributesCache = array();
-
-    protected $forbiddenFieldsCache = array();
+    protected $forbiddenFieldsCache = [];
 
     protected $isStrictModeForced = false;
 
     protected $isStrictMode = false;
 
-    public function __construct(User $user, Config $config = null, FileManager $fileManager = null, Metadata $metadata = null, FieldManagerUtil $fieldManager = null)
-    {
+    protected $entityManager;
+    protected $user;
+    protected $config;
+    protected $metadata;
+    protected $fieldUtil;
+    protected $dataCache;
+
+    public function __construct(
+        EntityManager $entityManager,
+        User $user,
+        Config $config = null,
+        Metadata $metadata = null,
+        FieldUtil $fieldUtil = null,
+        DataCache $dataCache
+    ) {
+        $this->entityManager = $entityManager;
+
         $this->data = (object) [
             'table' => (object) [],
             'fieldTable' => (object) [],
@@ -92,39 +111,34 @@ class Table
         }
 
         $this->user = $user;
-
         $this->metadata = $metadata;
-
-        if ($fieldManager) {
-            $this->fieldManager = $fieldManager;
-        }
+        $this->fieldUtil = $fieldUtil;
+        $this->dataCache = $dataCache;
 
         if (!$this->user->isFetched()) {
             throw new Error('User must be fetched before ACL check.');
         }
 
-        if ($fileManager) {
-            $this->fileManager = $fileManager;
-        }
         $this->valuePermissionList = $this->metadata->get(['app', $this->type, 'valuePermissionList'], []);
-        $this->valuePermissionHighestLevels = $this->metadata->get(['app', $this->type, 'valuePermissionHighestLevels'], array());
+        $this->valuePermissionHighestLevels = $this->metadata->get(['app', $this->type, 'valuePermissionHighestLevels'], []);
 
-        $this->initCacheFilePath();
+        $this->initCacheKey();
 
-        if ($config && $config->get('useCache') && file_exists($this->cacheFilePath)) {
-            $cached = include $this->cacheFilePath;
-            $this->data = $cached;
-        } else {
+        if ($config && $config->get('useCache') && $this->dataCache->has($this->cacheKey)) {
+            $this->data = $this->dataCache->get($this->cacheKey);
+        }
+        else {
             $this->load();
-            if ($config && $fileManager && $config->get('useCache')) {
+
+            if ($config && $config->get('useCache')) {
                 $this->buildCache();
             }
         }
     }
 
-    protected function initCacheFilePath()
+    protected function initCacheKey()
     {
-        $this->cacheFilePath = 'data/cache/application/acl/' . $this->getUser()->id . '.php';
+        $this->cacheKey = 'acl/' . $this->getUser()->id;
     }
 
     protected function getUser()
@@ -137,12 +151,12 @@ class Table
         return $this->metadata;
     }
 
-    protected function getFieldManager()
+    protected function getFieldUtil()
     {
-        return $this->fieldManager;
+        return $this->fieldUtil;
     }
 
-    public function getMap()
+    public function getMap() : StdClass
     {
         return $this->data;
     }
@@ -151,16 +165,20 @@ class Table
     {
         if (isset($this->data->table->$scope)) {
             $data = $this->data->table->$scope;
+
             if (is_string($data)) {
                 $data = $this->getScopeData($data);
+
                 return $data;
             }
+
             return $data;
         }
+
         return null;
     }
 
-    public function get($permission)
+    public function get(string $permission) : ?string
     {
         if ($permission == 'table') {
             return null;
@@ -169,32 +187,36 @@ class Table
         if (isset($this->data->$permission)) {
             return $this->data->$permission;
         }
+
         return 'no';
     }
 
-    public function getLevel($scope, $action)
+    public function getLevel(string $scope, string $action) : string
     {
         if (isset($this->data->table->$scope)) {
             if (isset($this->data->table->$scope->$action)) {
                 return $this->data->table->$scope->$action;
             }
         }
+
         return 'no';
     }
 
-    public function getHighestLevel($scope, $action)
+    public function getHighestLevel(string $scope, string $action) : string
     {
         if (in_array($action, $this->booleanActionList)) {
             return 'yes';
-        } else {
-            $level = $this->metadata->get(['scopes', $scope, $this->type . 'HighestLevel']);
-            return $level ?? 'all';
         }
+
+        $level = $this->metadata->get(['scopes', $scope, $this->type . 'HighestLevel']);
+
+        return $level ?? 'all';
     }
 
     private function load()
     {
-        $valuePermissionLists = (object)[];
+        $valuePermissionLists = (object) [];
+
         foreach ($this->valuePermissionList as $permission) {
             $valuePermissionLists->$permission = [];
         }
@@ -208,6 +230,7 @@ class Table
             foreach ($roleList as $role) {
                 $aclTableList[] = $role->get('data');
                 $fieldTableList[] = $role->get('fieldData');
+
                 foreach ($this->valuePermissionList as $permission) {
                     $valuePermissionLists->{$permission}[] = $role->get($permission);
                 }
@@ -220,17 +243,20 @@ class Table
             $this->applyDisabled($aclTable, $fieldTable);
             $this->applyMandatory($aclTable, $fieldTable);
             $this->applyAdditional($aclTable, $fieldTable, $valuePermissionLists);
-            $this->applyReadOnlyFields($fieldTable);
-        } else {
+        }
+        else {
             $aclTable = (object) [];
+
             foreach ($this->getScopeList() as $scope) {
                 if ($this->metadata->get("scopes.{$scope}.{$this->type}") === 'boolean') {
                     $aclTable->$scope = true;
                 } else {
                     if ($this->metadata->get("scopes.{$scope}.entity")) {
                         $aclTable->$scope = (object) [];
+
                         foreach ($this->actionList as $action) {
                             $aclTable->$scope->$action = 'all';
+
                             if (in_array($action, $this->booleanActionList)) {
                                 $aclTable->$scope->$action = 'yes';
                             }
@@ -256,11 +282,17 @@ class Table
 
         if (!$this->getUser()->isAdmin()) {
             $permissionsDefaultsGroupName = 'permissionsDefaults';
+
             if ($this->isStrictMode) {
                 $permissionsDefaultsGroupName = 'permissionsStrictDefaults';
             }
+
             foreach ($this->valuePermissionList as $permission) {
-                $this->data->$permission = $this->mergeValueList($valuePermissionLists->$permission, $this->metadata->get(['app', $this->type, $permissionsDefaultsGroupName, $permission, 'yes']));
+                $this->data->$permission = $this->mergeValueList(
+                    $valuePermissionLists->$permission,
+                    $this->metadata->get(['app', $this->type, $permissionsDefaultsGroupName, $permission, 'yes'])
+                );
+
                 if ($this->metadata->get('app.'.$this->type.'.mandatory.' . $permission)) {
                     $this->data->$permission = $this->metadata->get('app.'.$this->type.'.mandatory.' . $permission);
                 }
@@ -270,8 +302,10 @@ class Table
             foreach ($this->valuePermissionList as $permission) {
                 if (isset($this->valuePermissionHighestLevels[$permission])) {
                     $this->data->$permission = $this->valuePermissionHighestLevels[$permission];
+
                     continue;
                 }
+
                 $this->data->$permission = 'all';
             }
         }
@@ -281,20 +315,34 @@ class Table
     {
         $roleList = [];
 
-        $userRoleList = $this->getUser()->get('roles');
-        if (!(is_array($userRoleList) || $userRoleList instanceof \Traversable)) {
+        $userRoleList = $this->entityManager
+            ->getRepository('User')
+            ->getRelation($this->getUser(), 'roles')
+            ->find();
+
+        if (! $userRoleList instanceof Traversable) {
             throw new Error();
         }
+
         foreach ($userRoleList as $role) {
             $roleList[] = $role;
         }
 
-        $teamList = $this->getUser()->get('teams');
-        if (!(is_array($teamList) || $teamList instanceof \Traversable)) {
+        $teamList = $this->entityManager
+            ->getRepository('User')
+            ->getRelation($this->getUser(), 'teams')
+            ->find();
+
+        if (! $teamList instanceof Traversable) {
             throw new Error();
         }
+
         foreach ($teamList as $team) {
-            $teamRoleList = $team->get('roles');
+            $teamRoleList = $this->entityManager
+                ->getRepository('Team')
+                ->getRelation($team, 'roles')
+                ->find();
+
             foreach ($teamRoleList as $role) {
                 $roleList[] = $role;
             }
@@ -303,21 +351,27 @@ class Table
         return $roleList;
     }
 
-    public function getScopeForbiddenAttributeList($scope, $action = 'read', $thresholdLevel = 'no')
+    public function getScopeForbiddenAttributeList(string $scope, string $action = 'read', string $thresholdLevel = 'no') : array
     {
         $key = $scope . '_'. $action . '_' . $thresholdLevel;
+
         if (isset($this->forbiddenAttributesCache[$key])) {
             return $this->forbiddenAttributesCache[$key];
         }
 
         $fieldTableQuickAccess = $this->data->fieldTableQuickAccess;
 
-        if (!isset($fieldTableQuickAccess->$scope) || !isset($fieldTableQuickAccess->$scope->attributes) || !isset($fieldTableQuickAccess->$scope->attributes->$action)) {
+        if (
+            !isset($fieldTableQuickAccess->$scope) || !isset($fieldTableQuickAccess->$scope->attributes) ||
+            !isset($fieldTableQuickAccess->$scope->attributes->$action)
+        ) {
             $this->forbiddenAttributesCache[$key] = [];
+
             return [];
         }
 
         $levelList = [];
+
         foreach ($this->fieldLevelList as $level) {
             if (array_search($level, $this->fieldLevelList) >= array_search($thresholdLevel, $this->fieldLevelList)) {
                 $levelList[] = $level;
@@ -327,9 +381,15 @@ class Table
         $attributeList = [];
 
         foreach ($levelList as $level) {
-            if (!isset($fieldTableQuickAccess->$scope->attributes->$action->$level)) continue;
+            if (!isset($fieldTableQuickAccess->$scope->attributes->$action->$level)) {
+                continue;
+            }
+
             foreach ($fieldTableQuickAccess->$scope->attributes->$action->$level as $attribute) {
-                if (in_array($attribute, $attributeList)) continue;
+                if (in_array($attribute, $attributeList)) {
+                    continue;
+                }
+
                 $attributeList[] = $attribute;
             }
         }
@@ -339,7 +399,7 @@ class Table
         return $attributeList;
     }
 
-    public function getScopeForbiddenFieldList($scope, $action = 'read', $thresholdLevel = 'no')
+    public function getScopeForbiddenFieldList(string $scope, string $action = 'read', string $thresholdLevel = 'no') : array
     {
         $key = $scope . '_'. $action . '_' . $thresholdLevel;
         if (isset($this->forbiddenFieldsCache[$key])) {
@@ -348,12 +408,17 @@ class Table
 
         $fieldTableQuickAccess = $this->data->fieldTableQuickAccess;
 
-        if (!isset($fieldTableQuickAccess->$scope) || !isset($fieldTableQuickAccess->$scope->fields) || !isset($fieldTableQuickAccess->$scope->fields->$action)) {
+        if (
+            !isset($fieldTableQuickAccess->$scope) || !isset($fieldTableQuickAccess->$scope->fields) ||
+            !isset($fieldTableQuickAccess->$scope->fields->$action)
+        ) {
             $this->forbiddenFieldsCache[$key] = [];
+
             return [];
         }
 
         $levelList = [];
+
         foreach ($this->fieldLevelList as $level) {
             if (array_search($level, $this->fieldLevelList) >= array_search($thresholdLevel, $this->fieldLevelList)) {
                 $levelList[] = $level;
@@ -363,9 +428,15 @@ class Table
         $fieldList = [];
 
         foreach ($levelList as $level) {
-            if (!isset($fieldTableQuickAccess->$scope->fields->$action->$level)) continue;
+            if (!isset($fieldTableQuickAccess->$scope->fields->$action->$level)) {
+                continue;
+            }
+
             foreach ($fieldTableQuickAccess->$scope->fields->$action->$level as $field) {
-                if (in_array($field, $fieldList)) continue;
+                if (in_array($field, $fieldList)) {
+                    continue;
+                }
+
                 $fieldList[] = $field;
             }
         }
@@ -390,6 +461,7 @@ class Table
             foreach ($this->fieldActionList as $action) {
                 $fieldTableQuickAccess->$scope->attributes->$action = (object) [];
                 $fieldTableQuickAccess->$scope->fields->$action = (object) [];
+
                 foreach ($this->fieldLevelList as $level) {
                     $fieldTableQuickAccess->$scope->attributes->$action->$level = [];
                     $fieldTableQuickAccess->$scope->fields->$action->$level = [];
@@ -397,13 +469,17 @@ class Table
             }
 
             foreach (get_object_vars($scopeData) as $field => $fieldData) {
-                $attributeList = $this->getFieldManager()->getAttributeList($scope, $field);
+                $attributeList = $this->getFieldUtil()->getAttributeList($scope, $field);
 
                 foreach ($this->fieldActionList as $action) {
-                    if (!isset($fieldData->$action)) continue;
+                    if (!isset($fieldData->$action)) {
+                        continue;
+                    }
+
                     foreach ($this->fieldLevelList as $level) {
                         if ($fieldData->$action === $level) {
                             $fieldTableQuickAccess->$scope->fields->$action->{$level}[] = $field;
+
                             foreach ($attributeList as $attribute) {
                                 $fieldTableQuickAccess->$scope->attributes->$action->{$level}[] = $attribute;
                             }
@@ -423,6 +499,7 @@ class Table
         }
 
         $defaultsGroupName = 'default';
+
         if ($this->isStrictMode) {
             $defaultsGroupName = 'strictDefault';
         }
@@ -430,33 +507,53 @@ class Table
         $data = $this->metadata->get(['app', $this->type, $defaultsGroupName, 'scopeLevel'], []);
 
         foreach ($data as $scope => $item) {
-            if (isset($table->$scope)) continue;
+            if (isset($table->$scope)) {
+                continue;
+            }
+
             $value = $item;
+
             if (is_array($item)) {
                 $value = (object) $item;
             }
+
             $table->$scope = $value;
         }
 
         $defaultFieldData = $this->metadata->get(['app', $this->type, $defaultsGroupName, 'fieldLevel'], []);
 
         foreach ($this->getScopeList() as $scope) {
-            if (isset($table->$scope) && $table->$scope === false) continue;
-            if (!$this->getMetadata()->get('scopes.' . $scope . '.entity')) continue;
+            if (isset($table->$scope) && $table->$scope === false) {
+                continue;
+            }
+
+            if (!$this->getMetadata()->get('scopes.' . $scope . '.entity')) {
+                continue;
+            }
 
             $fieldList = array_keys($this->getMetadata()->get("entityDefs.{$scope}.fields", []));
 
-            $defaultScopeFieldData = $this->metadata->get('app.'.$this->type.'.'.$defaultsGroupName.'.scopeFieldLevel.' . $scope, []);
+            $defaultScopeFieldData = $this->metadata->get(
+                'app.'.$this->type.'.'.$defaultsGroupName.'.scopeFieldLevel.' . $scope, []);
 
             foreach (array_merge($defaultFieldData, $defaultScopeFieldData) as $field => $f) {
-                if (!in_array($field, $fieldList)) continue;
+                if (!in_array($field, $fieldList)) {
+                    continue;
+                }
+
                 if (!isset($fieldTable->$scope)) {
                     $fieldTable->$scope = (object) [];
                 }
-                if (isset($fieldTable->$scope->$field)) continue;
+
+                if (isset($fieldTable->$scope->$field)) {
+                    continue;
+                }
+
                 $fieldTable->$scope->$field = (object) [];
+
                 foreach ($this->fieldActionList as $action) {
                     $level = 'no';
+
                     if ($f === true) {
                         $level = 'yes';
                     } else {
@@ -472,22 +569,32 @@ class Table
         foreach ($this->getScopeWithAclList() as $scope) {
             if (!isset($table->$scope)) {
                 $aclType = $this->metadata->get('scopes.' . $scope . '.' . $this->type);
+
                 if ($aclType === true) {
                     $aclType = $this->defaultAclType;
                 }
+
                 if (!empty($aclType)) {
                     $paramDefaultsName = 'scopeLevelTypesDefaults';
+
                     if ($this->isStrictMode) {
                         $paramDefaultsName = 'scopeLevelTypesStrictDefaults';
                     }
-                    $defaultValue = $this->metadata->get(['app', $this->type, $paramDefaultsName, $aclType], $this->metadata->get(['app', $this->type, $paramDefaultsName, 'record']));
+
+                    $defaultValue = $this->metadata->get(
+                        ['app', $this->type, $paramDefaultsName, $aclType],
+                        $this->metadata->get(['app', $this->type, $paramDefaultsName, 'record'])
+                    );
+
                     if (is_array($defaultValue)) {
                         $defaultValue = (object) $defaultValue;
                     }
+
                     $table->$scope = $defaultValue;
 
                     if (is_object($table->$scope)) {
                         $actionList = $this->getMetadata()->get(['scopes', $scope, $this->type . 'ActionList']);
+
                         if ($actionList) {
                             foreach (get_object_vars($table->$scope) as $action => $level) {
                                 if (!in_array($action, $actionList)) {
@@ -511,30 +618,43 @@ class Table
 
         foreach ($data as $scope => $item) {
             $value = $item;
+
             if (is_array($item)) {
                 $value = (object) $item;
             }
+
             $table->$scope = $value;
         }
 
         $mandatoryFieldData = $this->metadata->get('app.'.$this->type.'.mandatory.fieldLevel', array());
 
         foreach ($this->getScopeList() as $scope) {
-            if (isset($table->$scope) && $table->$scope === false) continue;
-            if (!$this->getMetadata()->get('scopes.' . $scope . '.entity')) continue;
+            if (isset($table->$scope) && $table->$scope === false) {
+                continue;
+            }
+
+            if (!$this->getMetadata()->get('scopes.' . $scope . '.entity')) {
+                continue;
+            }
 
             $fieldList = array_keys($this->getMetadata()->get("entityDefs.{$scope}.fields", []));
 
             $mandatoryScopeFieldData = $this->metadata->get('app.'.$this->type.'.mandatory.scopeFieldLevel.' . $scope, array());
 
             foreach (array_merge($mandatoryFieldData, $mandatoryScopeFieldData) as $field => $f) {
-                if (!in_array($field, $fieldList)) continue;
+                if (!in_array($field, $fieldList)) {
+                    continue;
+                }
+
                 if (!isset($fieldTable->$scope)) {
                     $fieldTable->$scope = (object) [];
                 }
+
                 $fieldTable->$scope->$field = (object) [];
+
                 foreach ($this->fieldActionList as $action) {
                     $level = 'no';
+
                     if ($f === true) {
                         $level = 'yes';
                     } else {
@@ -569,6 +689,7 @@ class Table
                 $table->$scope = false;
                 unset($fieldTable->$scope);
             }
+
             foreach ($this->valuePermissionList as $permission) {
                 $valuePermissionLists->{$permission}[] = 'no';
             }
@@ -578,29 +699,38 @@ class Table
     private function mergeValueList(array $list, $defaultValue)
     {
         $result = null;
+
         foreach ($list as $level) {
             if ($level != 'not-set') {
                 if (is_null($result)) {
                     $result = $level;
                     continue;
                 }
+
                 if (array_search($result, $this->levelList) > array_search($level, $this->levelList)) {
                     $result = $level;
                 }
             }
         }
+
         if (is_null($result)) {
             $result = $defaultValue;
         }
+
         return $result;
     }
 
     protected function getScopeWithAclList()
     {
         $scopeList = [];
+
         $scopes = $this->metadata->get('scopes');
+
         foreach ($scopes as $scope => $d) {
-        	if (empty($d['acl'])) continue;
+        	if (empty($d['acl'])) {
+                continue;
+            }
+
         	$scopeList[] = $scope;
         }
         return $scopeList;
@@ -609,10 +739,13 @@ class Table
     protected function getScopeList()
     {
         $scopeList = [];
+
         $scopes = $this->metadata->get('scopes');
+
         foreach ($scopes as $scope => $d) {
             $scopeList[] = $scope;
         }
+
         return $scopeList;
     }
 
@@ -623,7 +756,9 @@ class Table
 
         foreach ($tableList as $table) {
             foreach ($scopeList as $scope) {
-            	if (!isset($table->$scope)) continue;
+            	if (!isset($table->$scope)) {
+                    continue;
+                }
 
             	$row = $table->$scope;
 
@@ -631,9 +766,11 @@ class Table
                     if (!isset($data->$scope)) {
                         $data->$scope = false;
                     }
-                } else if ($row === true) {
+                }
+                else if ($row === true) {
                     $data->$scope = true;
-                } else {
+                }
+                else {
                     if (!isset($data->$scope)) {
                         $data->$scope = (object) [];
                     }
@@ -641,7 +778,9 @@ class Table
                         $data->$scope = (object) [];
                     }
 
-                    if (!is_object($row)) continue;
+                    if (!is_object($row)) {
+                        continue;
+                    }
 
                     $actionList = $this->getMetadata()->get(['scopes', $scope, $this->type . 'ActionList'], $this->actionList);
 
@@ -651,7 +790,9 @@ class Table
                             if (!isset($data->$scope->$action)) {
                                 $data->$scope->$action = $level;
                             } else {
-                                if (array_search($data->$scope->$action, $this->levelList) > array_search($level, $this->levelList)) {
+                                if (
+                                    array_search($data->$scope->$action, $this->levelList) > array_search($level, $this->levelList)
+                                ) {
                                     $data->$scope->$action = $level;
                                 }
                             }
@@ -679,37 +820,54 @@ class Table
     private function mergeFieldTableList(array $tableList)
     {
         $data = (object) [];
+
         $scopeList = $this->getScopeWithAclList();
 
         foreach ($tableList as $table) {
             foreach ($scopeList as $scope) {
-                if (!isset($table->$scope)) continue;
+                if (!isset($table->$scope)) {
+                    continue;
+                }
 
                 if (!isset($data->$scope)) {
                     $data->$scope = (object) [];
                 }
 
-                if (!is_object($table->$scope)) continue;
+                if (!is_object($table->$scope)) {
+                    continue;
+                }
 
                 $fieldList = array_keys($this->getMetadata()->get("entityDefs.{$scope}.fields", []));
 
                 foreach (get_object_vars($table->$scope) as $field => $row) {
-                    if (!is_object($row)) continue;
+                    if (!is_object($row)) {
+                        continue;
+                    }
 
-                    if (!in_array($field, $fieldList)) continue;
+                    if (!in_array($field, $fieldList)) {
+                        continue;
+                    }
 
                     if (!isset($data->$scope->$field)) {
                         $data->$scope->$field = (object) [];
                     }
 
                     foreach ($this->fieldActionList as $i => $action) {
-                        if (!isset($row->$action)) continue;
+                        if (!isset($row->$action)) {
+                            continue;
+                        }
 
                         $level = $row->$action;
+
                         if (!isset($data->$scope->$field->$action)) {
                             $data->$scope->$field->$action = $level;
                         } else {
-                            if (array_search($data->$scope->$field->$action, $this->fieldLevelList) > array_search($level, $this->fieldLevelList)) {
+                            if (
+                                array_search(
+                                    $data->$scope->$field->$action,
+                                    $this->fieldLevelList
+                                ) > array_search($level, $this->fieldLevelList)
+                            ) {
                                 $data->$scope->$field->$action = $level;
                             }
                         }
@@ -723,30 +881,6 @@ class Table
 
     private function buildCache()
     {
-        $this->fileManager->putPhpContents($this->cacheFilePath, $this->data, true);
-    }
-
-    protected function applyReadOnlyFields(&$fieldTable)
-    {
-        // TODO Enable in 5.4.0
-        return;
-        $scopeList = $this->getScopeWithAclList();
-        foreach ($scopeList as $scope) {
-            if (!property_exists($fieldTable, $scope)) continue;
-            $fieldList = array_keys($this->getMetadata()->get(['entityDefs', $scope, 'fields'], []));
-            foreach ($fieldList as $field) {
-                if ($this->getMetadata()->get(['entityDefs', $scope, 'fields', $field, 'readOnly'])) {
-                    if (property_exists($fieldTable->$scope, $field)) {
-                        $fieldTable->$scope->$field->edit = 'no';
-                    } else {
-                        $fieldTable->$scope->$field = (object) [];
-                        foreach ($this->fieldActionList as $action) {
-                            $fieldTable->$scope->$field->$action = 'yes';
-                        }
-                        $fieldTable->$scope->$field->edit = 'no';
-                    }
-                }
-            }
-        }
+        $this->dataCache->store($this->cacheKey, $this->data);
     }
 }

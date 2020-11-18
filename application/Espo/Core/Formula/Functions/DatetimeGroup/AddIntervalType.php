@@ -29,45 +29,43 @@
 
 namespace Espo\Core\Formula\Functions\DatetimeGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Di;
 
-abstract class AddIntervalType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+use DateTime;
+
+abstract class AddIntervalType extends BaseFunction implements Di\DateTimeAware
 {
-    protected function init()
-    {
-        $this->addDependency('dateTime');
-    }
+    use Di\DateTimeSetter;
 
     protected $timeOnly = false;
 
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        $args = $this->evaluate($args);
+
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 2) {
-            throw new Error();
-        }
-
-        $dateTimeString = $this->evaluate($item->value[0]);
+        $dateTimeString = $args[0];
 
         if (!$dateTimeString) {
             return null;
         }
 
         if (!is_string($dateTimeString)) {
-            throw new Error();
+            $this->throwBadArgumentType(1, 'string');
         }
 
-        $interval = $this->evaluate($item->value[1]);
+        $interval = $args[1];
 
         if (!is_numeric($interval)) {
-            throw new Error();
+            $this->throwBadArgumentType(2, 'numeric');
         }
 
         $isTime = false;
@@ -81,17 +79,18 @@ abstract class AddIntervalType extends \Espo\Core\Formula\Functions\Base
         }
 
         try {
-            $dateTime = new \DateTime($dateTimeString);
+            $dateTime = new DateTime($dateTimeString);
         } catch (\Exception $e) {
+            $this->log('bad date-time value passed', 'warning');
             return null;
         }
 
         $dateTime->modify(($interval > 0 ? '+' : '') . strval($interval) . ' ' . $this->intervalTypeString);
 
         if ($isTime) {
-            return $dateTime->format($this->getInjection('dateTime')->getInternalDateTimeFormat());
+            return $dateTime->format($this->dateTime->getInternalDateTimeFormat());
         } else {
-            return $dateTime->format($this->getInjection('dateTime')->getInternalDateFormat());
+            return $dateTime->format($this->dateTime->getInternalDateFormat());
         }
     }
 }

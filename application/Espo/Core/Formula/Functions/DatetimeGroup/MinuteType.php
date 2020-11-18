@@ -29,40 +29,36 @@
 
 namespace Espo\Core\Formula\Functions\DateTimeGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Di;
 
-class MinuteType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+class MinuteType extends BaseFunction implements Di\DateTimeAware
 {
-    protected function init()
+    use Di\DateTimeSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('dateTime');
-    }
+        $args = $this->evaluate($args);
 
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            return true;
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 1) {
-             throw new Error();
-        }
-
-        $value = $this->evaluate($item->value[0]);
+        $value = $args[0];
 
         $timezone = null;
-        if (count($item->value) > 1) {
-             $timezone = $this->evaluate($item->value[1]);
+        if (count($args) > 1) {
+             $timezone = $args[1];
         }
 
         if (empty($value)) return -1;
 
         if (strlen($value) > 11) {
-            $resultString = $this->getInjection('dateTime')->convertSystemDateTime($value, $timezone, 'm');
+            $resultString = $this->dateTime->convertSystemDateTime($value, $timezone, 'm');
         } else {
             return 0;
         }

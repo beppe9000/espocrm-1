@@ -29,32 +29,33 @@
 
 namespace Espo\Core;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\InjectableFactory;
+use Espo\Core\Utils\ClassFinder;
+use Espo\Core\Notificators\Notificator;
+use Espo\Core\Notificators\DefaultNotificator;
 
-use \Espo\Core\Utils\Util;
-use \Espo\Core\InjectableFactory;
-
-class NotificatorFactory extends InjectableFactory
+class NotificatorFactory
 {
-    public function create($entityType)
-    {
-        $normalizedName = Util::normilizeClassName($entityType);
+    protected $defaultClassName = DefaultNotificator::class;
 
-        $className = '\\Espo\\Custom\\Notificators\\' . $normalizedName;
-        if (!class_exists($className)) {
-            $moduleName = $this->getMetadata()->getScopeModuleName($entityType);
-            if ($moduleName) {
-                $className = '\\Espo\\Modules\\' . $moduleName . '\\Notificators\\' . $normalizedName;
-            } else {
-                $className = '\\Espo\\Notificators\\' . $normalizedName;
-            }
-            if (!class_exists($className)) {
-                $className = '\\Espo\\Core\\Notificators\\Base';
-            }
+    protected $injectableFactory;
+    protected $classFinder;
+
+    public function __construct(InjectableFactory $injectableFactory, ClassFinder $classFinder)
+    {
+        $this->injectableFactory = $injectableFactory;
+        $this->classFinder = $classFinder;
+    }
+
+    public function create(string $entityType) : Notificator
+    {
+        $className = $this->classFinder->find('Notificators', $entityType);
+
+        if (!$className || !class_exists($className)) {
+            $className = $this->defaultClassName;
         }
 
-        $obj = $this->createByClassName($className);
-        $obj->setEntityType($entityType);
+        $obj = $this->injectableFactory->create($className);
 
         return $obj;
     }

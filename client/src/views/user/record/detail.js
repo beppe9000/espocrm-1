@@ -87,10 +87,10 @@ define('views/user/record/detail', 'views/record/detail', function (Dep) {
                     name: 'generateNewPassword',
                     label: 'Generate New Password',
                     action: 'generateNewPassword',
-                    hidden: !this.model.get('emailAddress') || !this.getConfig().get('smtpServer'),
+                    hidden: !this.model.get('emailAddress'),
                 });
 
-                if (!this.model.get('emailAddress') && this.getConfig().get('smtpServer')) {
+                if (!this.model.get('emailAddress')) {
                     this.listenTo(this.model, 'sync', function () {
                         if (this.model.get('emailAddress')) {
                             this.showActionItem('generateNewPassword');
@@ -206,6 +206,14 @@ define('views/user/record/detail', 'views/record/detail', function (Dep) {
                 } else {
                     this.setFieldReadOnly('type');
                 }
+            }
+
+            if (
+                !this.getConfig().get('auth2FA')
+                ||
+                !(this.model.isRegular() || this.model.isAdmin())
+            ) {
+                this.hideField('auth2FA');
             }
         },
 

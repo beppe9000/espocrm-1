@@ -6,6 +6,21 @@
     border-bottom: 1px solid @input-border;
 }
 
+.vis-content .vis-item.clickable .vis-item-content {
+    cursor: pointer !important;
+}
+.vis-item .vis-item-content:not(.clickable) {
+    cursor: default !important;
+}
+
+.vis-content .vis-labelset .vis-label .vis-inner {
+    max-width: 200px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    padding: @table-cell-padding;
+}
+
 .vis-foreground .vis-group,
 .vis-labelset .vis-label {
     border-bottom-color: @input-border !important;
@@ -22,7 +37,6 @@
 
 .vis-item .vis-item-content {
     color: #FFF !important;
-    cursor: default !important;
 }
 
 .vis-item.vis-range .vis-item-content,
@@ -65,6 +79,15 @@
 
 .vis-item.vis-background.busy {
     background-color: @gray-lighter;
+}
+
+.vis-item.vis-background.event-range {
+    border-color: lighten(@brand-primary, 10%);
+    border-left-width: 4px ;
+    border-right-width: 4px;
+    border-left-style: solid;
+    border-right-style: solid;
+    background: none;
 }
 
 @media screen and (max-width: (@screen-sm-min - 1px)) {

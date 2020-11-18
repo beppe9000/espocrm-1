@@ -29,6 +29,15 @@
 
 namespace tests\integration\Core;
 
+use Espo\Core\Authentication\Authentication;
+
+use Espo\Core\Application;
+use Espo\Core\Portal\Application as PortalApplication;
+use Espo\Core\Api\RequestWrapper;
+use Espo\Core\ApplicationRunners\Rebuild;
+
+use Slim\Psr7\Factory\RequestFactory;
+
 class Tester
 {
     protected $configPath = 'tests/integration/config.php';
@@ -38,6 +47,8 @@ class Tester
     protected $installPath = 'build/test';
 
     protected $testDataPath = 'tests/integration/testData';
+
+    protected $packageJsonPath = 'package.json';
 
     private $application;
 
@@ -120,24 +131,38 @@ class Tester
             die('Config for integration tests ['. $this->configPath .'] is not found');
         }
 
-        return include($this->configPath);
+        $data = include($this->configPath);
+
+        $packageData = json_decode(file_get_contents($this->packageJsonPath));
+
+        $version = $packageData->version;
+
+        $data['version'] = $version;
+
+        return $data;
     }
 
     protected function saveTestConfigData($optionName, $data)
     {
         $configData = $this->getTestConfigData();
+
+        if (array_key_exists($optionName, $configData) && $configData[$optionName] === $data) {
+            return true;
+        }
+
         $configData[$optionName] = $data;
 
         $fileManager = new \Espo\Core\Utils\File\Manager();
         return $fileManager->putPhpContents($this->configPath, $configData);
     }
 
-    public function auth($userName, $password = null, $portalId = null, $authenticationMethod = null)
+    public function auth($userName, $password = null, $portalId = null, $authenticationMethod = null, $request = null)
     {
         $this->userName = $userName;
         $this->password = $password;
         $this->portalId = $portalId;
         $this->authenticationMethod = $authenticationMethod;
+        $this->request = $request;
     }
 
     public function getApplication($reload = false, $clearCache = true, $portalId = null)
@@ -150,15 +175,21 @@ class Tester
                 $this->clearCache();
             }
 
-            $this->application = !$portalId ? new \Espo\Core\Application() : new \Espo\Core\Portal\Application($portalId);
+            $this->application = !$portalId ? new Application() : new PortalApplication($portalId);
 
-            $auth = new \Espo\Core\Utils\Auth($this->application->getContainer());
+            $auth = $this->application->getContainer()->get('injectableFactory')->createWith(Authentication::class, [
+                'allowAnyAccess' => false,
+            ]);
 
-            if (isset($this->userName)) {
+            $request = $this->request ?? new RequestWrapper(
+                (new RequestFactory())->createRequest('POST', '')
+            );
+
+            if (isset($this->userName) || $this->authenticationMethod) {
                 $this->password = isset($this->password) ? $this->password : $this->defaultUserPassword;
-                $auth->login($this->userName, $this->password, $this->authenticationMethod);
+                $result = $auth->login($this->userName, $this->password, $request, $this->authenticationMethod);
             } else {
-                $auth->useNoAuth();
+                $this->application->setupSystemUser();
             }
         }
 
@@ -203,14 +234,26 @@ class Tester
 
     protected function install()
     {
-        $mainApplication = new \Espo\Core\Application();
-        $fileManager = $mainApplication->getContainer()->get('fileManager');
+        $fileManager = new \Espo\Core\Utils\File\Manager();
+        $configData = $this->getTestConfigData();
 
         $latestEspoDir = Utils::getLatestBuildedPath($this->buildedPath);
 
-        $configData = $this->getTestConfigData();
-        $configData['siteUrl'] = $mainApplication->getContainer()->get('config')->get('siteUrl') . '/' . $this->installPath;
-        $this->params['siteUrl'] = $configData['siteUrl'];
+        if (empty($latestEspoDir)) {
+            die("EspoCRM build is not found. Please run \"grunt\" in your terminal.\n");
+        }
+
+        if (!isset($configData['siteUrl'])) {
+            $mainConfigData = include('data/config.php');
+
+            if (isset($mainConfigData['siteUrl'])) {
+                $configData['siteUrl'] = $mainConfigData['siteUrl'] . '/' . $this->installPath;
+            }
+        }
+
+        if (isset($configData['siteUrl'])) {
+            $this->params['siteUrl'] = $configData['siteUrl'];
+        }
 
         if (!file_exists($this->installPath)) {
             $fileManager->mkdir($this->installPath);
@@ -236,7 +279,11 @@ class Tester
         require_once('install/core/Installer.php');
 
         $installer = new \Installer();
-        $installer->saveData(array(), 'en_US');
+
+        $installer->saveData(array_merge($configData, [
+            'language' => 'en_US'
+        ]));
+
         $installer->saveConfig($configData);
 
         $installer = new \Installer(); //reload installer to get all config data
@@ -248,21 +295,32 @@ class Tester
     {
         $configData = $this->getTestConfigData();
 
-        $fullReset = false;
+        $fullReset = true;
 
-        $modifiedTime = filemtime($latestEspoDir . '/application');
-        if ($this->getParam('fullReset') || !isset($configData['lastModifiedTime']) || $configData['lastModifiedTime'] != $modifiedTime) {
-            $fullReset = true;
+        if (file_exists($latestEspoDir . '/application')) {
+            $modifiedTime = filemtime($latestEspoDir . '/application');
+
+            if (
+                !$this->getParam('fullReset') &&
+                isset($configData['lastModifiedTime']) &&
+                $configData['lastModifiedTime'] == $modifiedTime
+            ) {
+                $fullReset = false;
+            }
+
             $this->saveTestConfigData('lastModifiedTime', $modifiedTime);
         }
 
         if ($fullReset) {
             Utils::dropTables($configData['database']);
 
-            //$fileManager->removeInDir($this->installPath);
-            //$fileManager->copy($latestEspoDir, $this->installPath, true);
-            shell_exec('rm -rf "' . $this->installPath . '"');
-            shell_exec('cp -r "' . $latestEspoDir . '" "' . $this->installPath . '"');
+            if ($this->isShellEnabled()) {
+                shell_exec('rm -rf "' . $this->installPath . '"');
+                shell_exec('cp -r "' . $latestEspoDir . '" "' . $this->installPath . '"');
+            } else {
+                $fileManager->removeInDir($this->installPath);
+                $fileManager->copy($latestEspoDir, $this->installPath, true);
+            }
 
             return true;
         }
@@ -306,7 +364,7 @@ class Tester
 
         if (!empty($this->params['pathToFiles']) && file_exists($this->params['pathToFiles'])) {
             $result = $this->getDataLoader()->loadFiles($this->params['pathToFiles']);
-            $this->getApplication(true, true)->runRebuild();
+            $this->getApplication(true, true)->run(Rebuild::class);
         }
 
         if (!empty($this->params['dataFile'])) {
@@ -320,14 +378,14 @@ class Tester
         }
 
         if ($applyChanges) {
-            $this->getApplication(true, true)->runRebuild();
+            $this->getApplication(true, true)->run(Rebuild::class);
         }
     }
 
     public function setData(array $data)
     {
         $this->getDataLoader()->setData($data);
-        $this->getApplication(true, true)->runRebuild();
+        $this->getApplication(true, true)->run(Rebuild::class);
     }
 
     public function clearCache()
@@ -415,11 +473,11 @@ class Tester
     {
         $entityName = $isPortal ? 'PortalRole' : 'Role';
 
-        if (is_array($roleData['data'])) {
+        if (isset($roleData['data']) && is_array($roleData['data'])) {
             $roleData['data'] = json_encode($roleData['data']);
         }
 
-        if (is_array($roleData['fieldData'])) {
+        if (isset($roleData['fieldData']) && is_array($roleData['fieldData'])) {
             $roleData['fieldData'] = json_encode($roleData['fieldData']);
         }
 
@@ -437,5 +495,19 @@ class Tester
     public function normalizePath($path)
     {
         return $this->getParam('testDataPath') . '/' . $path;
+    }
+
+    protected function isShellEnabled()
+    {
+        if (!function_exists('exec') || !is_callable('shell_exec')) {
+            return false;
+        }
+
+        $result = shell_exec("echo test");
+        if (empty($result)) {
+            return false;
+        }
+
+        return true;
     }
 }

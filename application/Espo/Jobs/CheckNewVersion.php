@@ -29,25 +29,41 @@
 
 namespace Espo\Jobs;
 
-use Espo\Core\Exceptions;
+use Espo\Core\{
+    Utils\Config,
+    ORM\EntityManager,
+    Jobs\Job,
+};
 
-class CheckNewVersion extends \Espo\Core\Jobs\Base
+use DateTime;
+use DateTimeZone;
+
+class CheckNewVersion implements Job
 {
+    protected $config;
+    protected $entityManager;
+
+    public function __construct(Config $config, EntityManager $entityManager)
+    {
+        $this->config = $config;
+        $this->entityManager = $entityManager;
+    }
+
     public function run()
     {
-        if (!$this->getConfig()->get('adminNotifications') || !$this->getConfig()->get('adminNotificationsNewVersion')) {
+        if (!$this->config->get('adminNotifications') || !$this->config->get('adminNotificationsNewVersion')) {
             return true;
         }
 
-        $job = $this->getEntityManager()->getEntity('Job');
-        $job->set(array(
+        $job = $this->entityManager->getEntity('Job');
+        $job->set([
             'name' => 'Check for New Version (job)',
             'serviceName' => 'AdminNotifications',
             'methodName' => 'jobCheckNewVersion',
-            'executeTime' => $this->getRunTime()
-        ));
+            'executeTime' => $this->getRunTime(),
+        ]);
 
-        $this->getEntityManager()->saveEntity($job);
+        $this->entityManager->saveEntity($job);
 
         return true;
     }
@@ -57,16 +73,24 @@ class CheckNewVersion extends \Espo\Core\Jobs\Base
         $hour = rand(0, 4);
         $minute = rand(0, 59);
 
-        $nextDay = new \DateTime('+ 1 day');
+        $nextDay = new DateTime('+ 1 day');
         $time = $nextDay->format('Y-m-d') . ' ' . $hour . ':' . $minute . ':00';
 
-        $timeZone = $this->getConfig()->get('timeZone');
+        $timeZone = $this->config->get('timeZone');
         if (empty($timeZone)) {
             $timeZone = 'UTC';
         }
 
-        $datetime = new \DateTime($time, new \DateTimeZone($timeZone));
+        $datetime = new DateTime($time, new DateTimeZone($timeZone));
 
-        return $datetime->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        return $datetime->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * For backward compatibility.
+     */
+    protected function getEntityManager()
+    {
+        return $this->entityManager;
     }
 }

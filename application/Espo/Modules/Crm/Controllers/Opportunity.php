@@ -29,13 +29,11 @@
 
 namespace Espo\Modules\Crm\Controllers;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
 
 class Opportunity extends \Espo\Core\Controllers\Record
 {
-
     public function actionReportByLeadSource($params, $data, $request)
     {
         $level = $this->getAcl()->getLevel('Opportunity', 'read');
@@ -89,8 +87,9 @@ class Opportunity extends \Espo\Core\Controllers\Record
         $dateTo = $request->get('dateTo');
         $dateFilter = $request->get('dateFilter');
         $useLastStage = $request->get('useLastStage') === 'true';
+        $teamId = $request->get('teamId') ?? null;
 
-        return $this->getService('Opportunity')->reportSalesPipeline($dateFilter, $dateFrom, $dateTo, $useLastStage);
+        return $this->getService('Opportunity')->reportSalesPipeline($dateFilter, $dateFrom, $dateTo, $useLastStage, $teamId);
     }
 
     public function getActionEmailAddressList($params, $data, $request)

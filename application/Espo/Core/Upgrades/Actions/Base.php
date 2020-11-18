@@ -33,7 +33,10 @@ use Espo\Core\Utils\Util;
 use Espo\Core\Utils\System;
 use Espo\Core\Utils\Json;
 use Espo\Core\Exceptions\Error;
+
 use Composer\Semver\Semver;
+
+use Throwable;
 
 abstract class Base
 {
@@ -52,6 +55,8 @@ abstract class Base
     private $databaseHelper;
 
     protected $processId = null;
+
+    protected $parentProcessId = null;
 
     protected $manifestName = 'manifest.json';
 
@@ -152,11 +157,19 @@ abstract class Base
         return $this->getContainer()->get('entityManager');
     }
 
-    public function throwErrorAndRemovePackage($errorMessage = '')
+    public function throwErrorAndRemovePackage($errorMessage = '', $deletePackage = true, $systemRebuild = true)
     {
-        $this->deletePackageFiles();
-        $this->deletePackageArchive();
-        $this->disableMaintenanceMode();
+        if ($deletePackage) {
+            $this->deletePackageFiles();
+            $this->deletePackageArchive();
+        }
+
+        $this->disableMaintenanceMode(true);
+
+        if ($systemRebuild) {
+            $this->systemRebuild();
+        }
+
         throw new Error($errorMessage);
     }
 
@@ -182,9 +195,19 @@ abstract class Base
         return $this->processId;
     }
 
+    protected function getParentProcessId()
+    {
+        return $this->parentProcessId;
+    }
+
     public function setProcessId($processId)
     {
         $this->processId = $processId;
+    }
+
+    public function setParentProcessId($processId)
+    {
+        $this->parentProcessId = $processId;
     }
 
     /**
@@ -243,9 +266,11 @@ abstract class Base
 
         foreach ($versionList as $version) {
             $isInRange = false;
+
             try {
                 $isInRange = Semver::satisfies($currentVersion, $version);
-            } catch (\Throwable $e) {
+            }
+            catch (Throwable $e) {
                 $GLOBALS['log']->error('SemVer: Version identification error: '.$e->getMessage().'.');
             }
 
@@ -309,11 +334,13 @@ abstract class Base
             $scriptName = $scriptNames[$type];
 
             require_once($beforeInstallScript);
+
             $script = new $scriptName();
 
             try {
                 $script->run($this->getContainer(), $this->scriptParams);
-            } catch (\Throwable $e) {
+            }
+            catch (Throwable $e) {
                 $this->throwErrorAndRemovePackage($e->getMessage());
             }
         }
@@ -494,7 +521,8 @@ abstract class Base
     {
         try {
             $res = $this->getFileManager()->copy($sourcePath, $destPath, $recursively, $fileList, $copyOnlyFiles);
-        } catch (\Throwable $e) {
+        }
+        catch (Throwable $e) {
             $this->throwErrorAndRemovePackage($e->getMessage());
         }
 
@@ -667,12 +695,12 @@ abstract class Base
         $packageArchivePath = $this->getPackagePath(true);
 
         if (!file_exists($packageArchivePath)) {
-            throw new Error('Package Archive doesn\'t exist.');
+            $this->throwErrorAndRemovePackage('Package Archive doesn\'t exist.', false, false);
         }
 
         $res = $this->getZipUtil()->unzip($packageArchivePath, $packagePath);
         if ($res === false) {
-            throw new Error('Unnable to unzip the file - '.$packagePath.'.');
+            $this->throwErrorAndRemovePackage('Unnable to unzip the file - '.$packagePath.'.', false, false);
         }
     }
 
@@ -705,9 +733,12 @@ abstract class Base
     protected function systemRebuild()
     {
         try {
-            return $this->getContainer()->get('dataManager')->rebuild();
-        } catch (\Throwable $e) {
-            $GLOBALS['log']->error('Database rebuild failure, details: '.$e->getMessage().'.');
+            $this->getContainer()->get('dataManager')->rebuild();
+
+            return true;
+        }
+        catch (Throwable $e) {
+            $GLOBALS['log']->error('Database rebuild failure, details: '. $e->getMessage() .'.');
         }
 
         return false;
@@ -768,7 +799,7 @@ abstract class Base
             $permissionDeniedList = $this->getFileManager()->getLastPermissionDeniedList();
 
             $delimiter = $this->isCli() ? "\n" : "<br>";
-            throw new Error("Permission denied: " . $delimiter . implode($delimiter, $permissionDeniedList));
+            $this->throwErrorAndRemovePackage("Permission denied: " . $delimiter . implode($delimiter, $permissionDeniedList), false, false);
         }
     }
 
@@ -806,6 +837,12 @@ abstract class Base
     protected function enableMaintenanceMode()
     {
         $config = $this->getConfig();
+        $configParamName = $this->getTemporaryConfigParamName();
+        $parentConfigParamName = $this->getTemporaryConfigParamName(true);
+
+        if ($config->has($configParamName) || ($parentConfigParamName && $config->has($parentConfigParamName))) {
+            return;
+        }
 
         $actualParams = [
             'maintenanceMode' => $config->get('maintenanceMode'),
@@ -813,7 +850,6 @@ abstract class Base
             'useCache' => $config->get('useCache'),
         ];
 
-        $configParamName = $this->getTemporaryConfigParamName();
         $config->set($configParamName, $actualParams);
 
         $save = false;
@@ -838,23 +874,32 @@ abstract class Base
         }
     }
 
-    protected function disableMaintenanceMode()
+    protected function disableMaintenanceMode($force = false)
     {
         $config = $this->getConfig();
 
-        $configParamName = $this->getTemporaryConfigParamName();
-        $temporaryUpgradeParams = $config->get($configParamName, []);
+        $configParamList = [
+            $this->getTemporaryConfigParamName()
+        ];
+
+        if ($force && $this->getTemporaryConfigParamName(true)) {
+            $configParamList[] = $this->getTemporaryConfigParamName(true);
+        }
 
         $save = false;
 
-        foreach ($temporaryUpgradeParams as $paramName => $paramValue) {
-            if ($config->get($paramName) != $paramValue) {
-                $config->set($paramName, $paramValue);
-                $save = true;
-            }
-        }
+        foreach ($configParamList as $configParamName) {
 
-        if ($config->has($configParamName)) {
+            if (!$config->has($configParamName)) {
+                continue;
+            }
+
+            foreach ($config->get($configParamName, []) as $paramName => $paramValue) {
+                if ($config->get($paramName) != $paramValue) {
+                    $config->set($paramName, $paramValue);
+                }
+            }
+
             $config->remove($configParamName);
             $save = true;
         }
@@ -864,9 +909,18 @@ abstract class Base
         }
     }
 
-    protected function getTemporaryConfigParamName()
+    protected function getTemporaryConfigParamName($isParentProcess = false)
     {
-        return 'temporaryUpgradeParams' . $this->getProcessId();
+        $processId = $this->getProcessId();
+
+        if ($isParentProcess) {
+            $processId = $this->getParentProcessId();
+            if (!$processId) {
+                return;
+            }
+        }
+
+        return 'temporaryUpgradeParams' . $processId;
     }
 
     protected function isCli()

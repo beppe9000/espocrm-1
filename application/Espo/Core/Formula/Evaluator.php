@@ -29,13 +29,23 @@
 
 namespace Espo\Core\Formula;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\{
+    InjectableFactory,
+    ORM\Entity,
+};
 
+use StdClass;
+
+/**
+ * Creates an instance of Processor and executes a script.
+ */
 class Evaluator
 {
     private $functionFactory;
 
-    private $formula;
+    private $functionClassNameMap;
+
+    private $processor;
 
     private $parser;
 
@@ -43,32 +53,38 @@ class Evaluator
 
     private $parsedHash;
 
-    public function __construct($container = null, array $functionClassNameMap = [], array $parsedHash = [])
+    public function __construct(InjectableFactory $injectableFactory, array $functionClassNameMap = [])
     {
         $this->attributeFetcher = new AttributeFetcher();
-        $this->functionFactory = new FunctionFactory($container, $this->attributeFetcher, $functionClassNameMap);
-        $this->formula = new Formula($this->functionFactory);
+
+        $this->injectableFactory = $injectableFactory;
+        $this->functionClassNameMap = $functionClassNameMap;
+
         $this->parser = new Parser();
         $this->parsedHash = [];
     }
 
-    public function process($expression, $entity = null, $variables = null)
+    public function process(string $expression, ?Entity $entity = null, ?StdClass $variables = null)
     {
-        if (!array_key_exists($expression, $this->parsedHash)) {
-            $item = $this->parser->parse($expression);
-            $this->parsedHash[$expression] = $item;
-        } else {
-            $item = $this->parsedHash[$expression];
-        }
+        $this->processor = new Processor(
+            $this->injectableFactory, $this->attributeFetcher, $this->functionClassNameMap, $entity, $variables
+        );
 
-        if (!$item || !($item instanceof \StdClass)) {
-            throw new Error();
-        }
+        $item = $this->getParsedExpression($expression);
 
-        $result = $this->formula->process($item, $entity, $variables);
+        $result = $this->processor->process($item);
 
         $this->attributeFetcher->resetRuntimeCache();
 
         return $result;
+    }
+
+    private function getParsedExpression(string $expression) : Argument
+    {
+        if (!array_key_exists($expression, $this->parsedHash)) {
+            $this->parsedHash[$expression] = $this->parser->parse($expression);
+        }
+
+        return new Argument($this->parsedHash[$expression]);
     }
 }

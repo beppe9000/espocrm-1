@@ -68,13 +68,15 @@ if ($installerConfig->get('isInstalled')) {
     exit;
 }
 
-if (!$installerConfig->get('cliSessionId')) {
-    session_start();
-    $installerConfig->set('cliSessionId', session_id());
-    $installerConfig->save();
+if (session_status() != \PHP_SESSION_ACTIVE) {
+    if (!$installerConfig->get('cliSessionId')) {
+        session_start();
+        $installerConfig->set('cliSessionId', session_id());
+        $installerConfig->save();
+    } else {
+        session_id($installerConfig->get('cliSessionId'));
+    }
 }
-
-$sessonId = session_id($installerConfig->get('cliSessionId'));
 
 ob_start();
 

@@ -31,6 +31,13 @@ namespace Espo\Core\Webhook;
 
 use Espo\Entities\Webhook;
 
+use Espo\Core\{
+    Utils\Config,
+};
+
+/**
+ * Sends a poption.
+ */
 class Sender
 {
     const CONNECT_TIMEOUT = 5;
@@ -39,7 +46,7 @@ class Sender
 
     protected $config;
 
-    public function __construct(\Espo\Core\Utils\Config $config)
+    public function __construct(Config $config)
     {
         $this->config = $config;
     }
@@ -67,7 +74,7 @@ class Sender
         $handler = curl_init($webhook->get('url'));
         curl_setopt($handler, \CURLOPT_RETURNTRANSFER, true);
         curl_setopt($handler, \CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($handler, \CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($handler, \CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($handler, \CURLOPT_HEADER, true);
         curl_setopt($handler, \CURLOPT_CUSTOMREQUEST, 'POST');
         curl_setopt($handler, \CURLOPT_CONNECTTIMEOUT, $connectTimeout);

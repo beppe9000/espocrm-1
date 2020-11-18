@@ -29,9 +29,9 @@
 
 namespace Espo\Controllers;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
 
 class ExternalAccount extends \Espo\Core\Controllers\Record
 {
@@ -75,7 +75,7 @@ class ExternalAccount extends \Espo\Core\Controllers\Record
         $id = $request->get('id');
         list($integration, $userId) = explode('__', $id);
 
-        if ($this->getUser()->id != $userId) {
+        if ($this->getUser()->id != $userId && !$this->getUser()->isAdmin()) {
             throw new Forbidden();
         }
 
@@ -93,12 +93,7 @@ class ExternalAccount extends \Espo\Core\Controllers\Record
     {
         list($integration, $userId) = explode('__', $params['id']);
 
-        if ($this->getUser()->id != $userId) {
-            throw new Forbidden();
-        }
-
-        $entity = $this->getEntityManager()->getEntity('ExternalAccount', $params['id']);
-        return $entity->toArray();
+        return $this->getRecordService()->read($params['id'])->getValueMap();
     }
 
     public function actionUpdate($params, $data, $request)
@@ -114,7 +109,7 @@ class ExternalAccount extends \Espo\Core\Controllers\Record
 
         list($integration, $userId) = explode('__', $params['id']);
 
-        if ($this->getUser()->id != $userId) {
+        if ($this->getUser()->id != $userId && !$this->getUser()->isAdmin()) {
             throw new Forbidden();
         }
 
@@ -140,7 +135,7 @@ class ExternalAccount extends \Espo\Core\Controllers\Record
 
         list($integration, $userId) = explode('__', $id);
 
-        if ($this->getUser()->id != $userId) {
+        if ($this->getUser()->id != $userId && !$this->getUser()->isAdmin()) {
             throw new Forbidden();
         }
 

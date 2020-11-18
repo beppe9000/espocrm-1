@@ -321,7 +321,10 @@ define('views/fields/array', ['views/fields/base', 'lib!Selectize'], function (D
                 highlight: false,
                 searchField: ['label'],
                 plugins: ['remove_button'],
-                score: function (search) {
+            };
+
+            if (!this.matchAnyWord) {
+                selectizeOptions.score = function (search) {
                     var score = this.getScoreFunction(search);
                     search = search.toLowerCase();
                     return function (item) {
@@ -330,8 +333,8 @@ define('views/fields/array', ['views/fields/base', 'lib!Selectize'], function (D
                         }
                         return 0;
                     };
-                }
-            };
+                };
+            }
 
             if (this.allowCustomOptions) {
                 selectizeOptions.persist = false;
@@ -354,6 +357,14 @@ define('views/fields/array', ['views/fields/base', 'lib!Selectize'], function (D
 
             var type = this.$el.find('select.search-type').val();
             this.handleSearchType(type);
+
+            this.$el.find('select.search-type').on('change', function () {
+                this.trigger('change');
+            }.bind(this));
+
+            this.$element.on('change', function () {
+                this.trigger('change');
+            }.bind(this));
         },
 
         fetchFromDom: function () {

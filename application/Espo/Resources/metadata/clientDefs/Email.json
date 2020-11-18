@@ -20,8 +20,10 @@
         "compose":"views/modals/compose-email"
     },
     "quickCreateModalType":"compose",
+    "defaultSidePanelView": "views/email/record/panels/default-side",
     "defaultSidePanelFieldList": [
         "teams",
+        "status",
         "replied",
         "replies"
     ],
@@ -51,11 +53,21 @@
                 {
                     "label":"Folders",
                     "link":"#EmailFolder",
-                    "configCheck": "!emailFoldersDisabled"
+                    "configCheck": "!emailFoldersDisabled",
+                    "accessDataList": [
+                        {
+                            "inPortalDisabled": true
+                        }
+                    ]
                 },
                 {
                     "label":"Filters",
-                    "link":"#EmailFilter"
+                    "link":"#EmailFilter",
+                    "accessDataList": [
+                        {
+                            "inPortalDisabled": true
+                        }
+                    ]
                 }
             ]
         },

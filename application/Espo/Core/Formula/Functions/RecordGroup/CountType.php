@@ -29,63 +29,58 @@
 
 namespace Espo\Core\Formula\Functions\RecordGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class CountType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Di;
+
+class CountType extends BaseFunction implements
+    Di\EntityManagerAware,
+    Di\SelectManagerFactoryAware
 {
-    protected function init()
+    use Di\EntityManagerSetter;
+    use Di\SelectManagerFactorySetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('entityManager');
-        $this->addDependency('selectManagerFactory');
-    }
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (count($args) < 1) {
+            $this->throwTooFewArguments(1);
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
+        $entityType = $this->evaluate($args[0]);
 
-        if (count($item->value) < 1) {
-            throw new Error();
-        }
-
-        $entityType = $this->evaluate($item->value[0]);
-
-        if (count($item->value) < 3) {
+        if (count($args) < 3) {
             $filter = null;
-            if (count($item->value) == 2) {
-                $filter = $this->evaluate($item->value[1]);
+            if (count($args) == 2) {
+                $filter = $this->evaluate($args[1]);
             }
 
-            $selectManager = $this->getInjection('selectManagerFactory')->create($entityType);
+            $selectManager = $this->selectManagerFactory->create($entityType);
             $selectParams = $selectManager->getEmptySelectParams();
 
             if ($filter) {
                 if (is_string($filter)) {
                     $selectManager->applyFilter($filter, $selectParams);
                 } else {
-                    throw new Error("Formula record\\count: Bad filter.");
+                    $this->throwError("Bad filter.");
                 }
             }
 
-            return $this->getInjection('entityManager')->getRepository($entityType)->count($selectParams);
+            return $this->entityManager->getRepository($entityType)->count($selectParams);
         }
 
         $whereClause = [];
 
         $i = 1;
-        while ($i < count($item->value) - 1) {
-            $key = $this->evaluate($item->value[$i]);
-            $value = $this->evaluate($item->value[$i + 1]);
-            $whereClause[$key] = $value;
+        while ($i < count($args) - 1) {
+            $key = $this->evaluate($args[$i]);
+            $value = $this->evaluate($args[$i + 1]);
+            $whereClause[] = [$key => $value];
             $i = $i + 2;
         }
 
-        return $this->getInjection('entityManager')->getRepository($entityType)->where($whereClause)->count();
+        return $this->entityManager->getRepository($entityType)->where($whereClause)->count();
     }
 }

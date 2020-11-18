@@ -30,115 +30,109 @@
 namespace Espo\Repositories;
 
 use Espo\ORM\Entity;
+use Espo\ORM\Repository\Repository;
 use Espo\Core\Utils\Json;
 
-class Preferences extends \Espo\Core\ORM\Repository
+use PDO;
+
+use Espo\Core\Di;
+
+class Preferences extends Repository implements
+    Di\MetadataAware,
+    Di\ConfigAware,
+    Di\EntityManagerAware
 {
+    use Di\MetadataSetter;
+    use Di\ConfigSetter;
+    use Di\EntityManagerSetter;
+
     protected $defaultAttributeListFromSettings = [
         'decimalMark',
         'thousandSeparator',
         'exportDelimiter',
-        'followCreatedEntities'
+        'followCreatedEntities',
     ];
 
-    protected $data = array();
+    protected $data = [];
 
     protected $entityType = 'Preferences';
 
-    protected function init()
+    public function get(?string $id = null) : ?Entity
     {
-        parent::init();
-        $this->addDependencyList([
-            'fileManager',
-            'metadata',
-            'config',
-            'entityManager'
-        ]);
-    }
-
-    protected function getFileManager()
-    {
-        return $this->getInjection('fileManager');
-    }
-
-    protected function getEntityManger()
-    {
-        return $this->getInjection('entityManager');
-    }
-
-    protected function getMetadata()
-    {
-        return $this->getInjection('metadata');
-    }
-
-    protected function getConfig()
-    {
-        return $this->getInjection('config');
-    }
-
-    public function get($id = null)
-    {
-        if ($id) {
-            $entity = $this->entityFactory->create('Preferences');
-            $entity->id = $id;
-            if (empty($this->data[$id])) {
-                $pdo = $this->getEntityManger()->getPDO();
-                $sql = "SELECT `id`, `data` FROM `preferences` WHERE id = ".$pdo->quote($id);
-                $ps = $pdo->query($sql);
-
-                $data = null;
-
-                $sth = $pdo->prepare($sql);
-                $sth->execute();
-
-                while ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
-                    $data = Json::decode($row['data']);
-                    $data = get_object_vars($data);
-                    break;
-                }
-
-                if ($data) {
-                    $this->data[$id] = $data;
-                } else {
-                    $fields = $this->getMetadata()->get('entityDefs.Preferences.fields');
-                    $defaults = array();
-
-                    $dashboardLayout = $this->getConfig()->get('dashboardLayout');
-                    $dashletsOptions = null;
-                    if (!$dashboardLayout) {
-                        $dashboardLayout = $this->getMetadata()->get('app.defaultDashboardLayouts.Standard');
-                        $dashletsOptions = $this->getMetadata()->get('app.defaultDashboardOptions.Standard');
-                    }
-
-                    if ($dashletsOptions === null) {
-                        $dashletsOptions = $this->getConfig()->get('dashletsOptions', (object) []);
-                    }
-
-                    $defaults['dashboardLayout'] = $dashboardLayout;
-                    $defaults['dashletsOptions'] = $dashletsOptions;
-
-                    foreach ($fields as $field => $d) {
-                        if (array_key_exists('default', $d)) {
-                            $defaults[$field] = $d['default'];
-                        }
-                    }
-                    foreach ($this->defaultAttributeListFromSettings as $attr) {
-                        $defaults[$attr] = $this->getConfig()->get($attr);
-                    }
-
-                    $this->data[$id] = $defaults;
-                    $entity->set($defaults);
-                }
-            }
-
-            $entity->set($this->data[$id]);
-
-            $this->fetchAutoFollowEntityTypeList($entity);
-
-            $entity->setAsFetched($this->data[$id]);
-
-            return $entity;
+        if (!$id) {
+            return $this->entityFactory->create('Preferences');
         }
+
+        $entity = $this->entityFactory->create('Preferences');
+        $entity->id = $id;
+
+        if (!isset($this->data[$id])) {
+            $this->loadData($id);
+        }
+
+        $entity->set($this->data[$id]);
+
+        $this->fetchAutoFollowEntityTypeList($entity);
+
+        $entity->setAsFetched($this->data[$id]);
+
+        return $entity;
+    }
+
+    protected function loadData(string $id)
+    {
+        $data = null;
+
+        $select = $this->getEntityManager()->getQueryBuilder()
+            ->select()
+            ->from('Preferences')
+            ->select(['id', 'data'])
+            ->where([
+                'id' => $id,
+            ])
+            ->limit(0, 1)
+            ->build();
+
+        $sth = $this->getEntityManager()->getQueryExecutor()->execute($select);
+
+        while ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
+            $data = Json::decode($row['data']);
+            break;
+        }
+
+        if ($data) {
+            $this->data[$id] = get_object_vars($data);
+            return;
+        }
+
+        $fields = $this->metadata->get('entityDefs.Preferences.fields');
+        $defaults = [];
+
+        $dashboardLayout = $this->config->get('dashboardLayout');
+        $dashletsOptions = null;
+
+        if (!$dashboardLayout) {
+            $dashboardLayout = $this->metadata->get('app.defaultDashboardLayouts.Standard');
+            $dashletsOptions = $this->metadata->get('app.defaultDashboardOptions.Standard');
+        }
+
+        if ($dashletsOptions === null) {
+            $dashletsOptions = $this->config->get('dashletsOptions', (object) []);
+        }
+
+        $defaults['dashboardLayout'] = $dashboardLayout;
+        $defaults['dashletsOptions'] = $dashletsOptions;
+
+        foreach ($fields as $field => $d) {
+            if (array_key_exists('default', $d)) {
+                $defaults[$field] = $d['default'];
+            }
+        }
+        foreach ($this->defaultAttributeListFromSettings as $attr) {
+            $defaults[$attr] = $this->config->get($attr);
+        }
+
+        $this->data[$id] = $defaults;
     }
 
     protected function fetchAutoFollowEntityTypeList(Entity $entity)
@@ -146,18 +140,18 @@ class Preferences extends \Espo\Core\ORM\Repository
         $id = $entity->id;
 
         $autoFollowEntityTypeList = [];
-        $pdo = $this->getEntityManger()->getPDO();
-        $sql = "
-            SELECT `entity_type` AS 'entityType' FROM `autofollow`
-            WHERE `user_id` = ".$pdo->quote($id)."
-            ORDER BY `entity_type`
-        ";
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        $rows = $sth->fetchAll();
-        foreach ($rows as $row) {
-            $autoFollowEntityTypeList[] = $row['entityType'];
+
+        $autofollowList = $this->entityManager->getRepository('Autofollow')
+            ->select(['entityType'])
+            ->where([
+                'userId' => $id,
+            ])
+            ->find();
+
+        foreach ($autofollowList as $autofollow) {
+            $autoFollowEntityTypeList[] = $autofollow->get('entityType');
         }
+
         $this->data[$id]['autoFollowEntityTypeList'] = $autoFollowEntityTypeList;
         $entity->set('autoFollowEntityTypeList', $autoFollowEntityTypeList);
     }
@@ -166,44 +160,43 @@ class Preferences extends \Espo\Core\ORM\Repository
     {
         $id = $entity->id;
 
-        $was = $entity->getFetched('autoFollowEntityTypeList');
-        $became = $entity->get('autoFollowEntityTypeList');
-
-        if (!is_array($was)) {
-            $was = [];
-        }
-        if (!is_array($became)) {
-            $became = [];
-        }
-
-        if ($was == $became) {
+        if (!$entity->isAttributeChanged('autoFollowEntityTypeList')) {
             return;
         }
-        $pdo = $this->getEntityManger()->getPDO();
-        $sql = "DELETE FROM autofollow WHERE user_id = ".$pdo->quote($id)."";
-        $pdo->query($sql);
 
-        $scopes = $this->getMetadata()->get('scopes');
-        foreach ($became as $entityType) {
-            if (isset($scopes[$entityType]) && !empty($scopes[$entityType]['stream'])) {
-                $sql = "
-                    INSERT INTO autofollow (user_id, entity_type)
-                    VALUES (".$pdo->quote($id).", ".$pdo->quote($entityType).")
-                ";
-                $pdo->query($sql);
-            }
+        $entityTypeList = $entity->get('autoFollowEntityTypeList') ?? [];
+
+        $delete = $this->entityManager->getQueryBuilder()
+            ->delete()
+            ->from('Autofollow')
+            ->where([
+                'userId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($delete);
+
+        $entityTypeList = array_filter($entityTypeList, function ($item) {
+            return (bool) $this->metadata->get(['scopes', $item, 'stream']);
+        });
+
+        foreach ($entityTypeList as $entityType) {
+            $this->entityManager->createEntity('Autofollow', [
+                'userId' => $id,
+                'entityType' => $entityType,
+            ]);
         }
     }
 
-    public function save(Entity $entity, array $options = array())
+    public function save(Entity $entity, array $options = [])
     {
         if (!$entity->id) return;
 
         $this->data[$entity->id] = $entity->toArray();
 
-        $fields = $fields = $this->getMetadata()->get('entityDefs.Preferences.fields');
+        $fields = $fields = $this->metadata->get('entityDefs.Preferences.fields');
 
-        $data = array();
+        $data = [];
         foreach ($this->data[$entity->id] as $field => $value) {
             if (empty($fields[$field]['notStorable'])) {
                 $data[$field] = $value;
@@ -212,16 +205,22 @@ class Preferences extends \Espo\Core\ORM\Repository
 
         $dataString = Json::encode($data, \JSON_PRETTY_PRINT);
 
-        $pdo = $this->getEntityManger()->getPDO();
+        $insert = $this->getEntityManager()->getQueryBuilder()
+            ->insert()
+            ->into('Preferences')
+            ->columns(['id', 'data'])
+            ->values([
+                'id' => $entity->id,
+                'data' => $dataString,
+            ])
+            ->updateSet([
+                'data' => $dataString,
+            ])
+            ->build();
 
-        $sql = "
-            INSERT INTO `preferences` (`id`, `data`) VALUES (".$pdo->quote($entity->id).", ".$pdo->quote($dataString).")
-            ON DUPLICATE KEY UPDATE `data` = ".$pdo->quote($dataString)."
-        ";
+        $this->getEntityManager()->getQueryExecutor()->execute($insert);
 
-        $pdo->query($sql);
-
-        $user = $this->getEntityManger()->getEntity('User', $entity->id);
+        $user = $this->entityManager->getEntity('User', $entity->id);
         if ($user && !$user->isPortal()) {
             $this->storeAutoFollowEntityTypeList($entity);
         }
@@ -229,46 +228,40 @@ class Preferences extends \Espo\Core\ORM\Repository
         return $entity;
     }
 
-    public function deleteFromDb($id)
+    public function deleteFromDb(string $id)
     {
-        $pdo = $this->getEntityManger()->getPDO();
-        $sql = "DELETE  FROM `preferences` WHERE `id` = " . $pdo->quote($id);
-        $ps = $pdo->query($sql);
+        $delete = $this->getEntityManager()->getQueryBuilder()
+            ->delete()
+            ->from('Preferences')
+            ->where([
+                'id' => $id,
+            ])
+            ->build();
+
+        $this->getEntityManager()->getQueryExecutor()->execute($delete);
     }
 
-    public function remove(Entity $entity, array $options = array())
+    public function remove(Entity $entity, array $options = [])
     {
         if (!$entity->id) return;
+
         $this->deleteFromDb($entity->id);
-        if (isset($this->data[$userId])) {
-            unset($this->data[$userId]);
+
+        if (isset($this->data[$entity->id])) {
+            unset($this->data[$entity->id]);
         }
     }
 
-    public function resetToDefaults($userId)
+    public function resetToDefaults(string $userId)
     {
         $this->deleteFromDb($userId);
+
         if (isset($this->data[$userId])) {
             unset($this->data[$userId]);
         }
+
         if ($entity = $this->get($userId)) {
             return $entity->toArray();
         }
-    }
-
-    public function find(array $params)
-    {
-    }
-
-    public function findOne(array $params)
-    {
-    }
-
-    public function getAll()
-    {
-    }
-
-    public function count(array $params)
-    {
     }
 }

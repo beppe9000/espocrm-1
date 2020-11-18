@@ -29,21 +29,15 @@
 
 namespace Espo\Core\Formula\Functions\LogicalGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class NotType extends \Espo\Core\Formula\Functions\Base
+class NotType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return true;
-        }
-
-        if (is_null($item->value)) {
-            return true;
-        }
-
-        return  !$this->evaluate($item->value);
-
+        return !$this->evaluate($args[0]);
     }
 }

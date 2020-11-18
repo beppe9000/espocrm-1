@@ -63,12 +63,18 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
                 if ((e.keyCode == 10 || e.keyCode == 13) && e.ctrlKey) {
                     this.post();
                 } else if (e.keyCode == 9) {
-                    $text = $(e.currentTarget)
+                    var $text = $(e.currentTarget)
                     if ($text.val() == '') {
                         this.disablePostingMode();
                     }
                 }
-            }
+            },
+            'keyup textarea[data-name="post"]': function (e) {
+                this.controlPreviewButton();
+            },
+            'click .action[data-action="preview"]': function () {
+                this.preview();
+            },
         }, Dep.prototype.events),
 
         data: function () {
@@ -77,6 +83,15 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             data.placeholderText = this.placeholderText;
             data.allowInternalNotes = this.allowInternalNotes;
             return data;
+        },
+
+        controlPreviewButton: function () {
+            this.$previewButton = this.$previewButton || this.$el.find('.stream-post-preview');
+            if (this.$textarea.val() == '') {
+                this.$previewButton.addClass('hidden');
+            } else {
+                this.$previewButton.removeClass('hidden');
+            }
         },
 
         enablePostingMode: function (byFocus) {
@@ -106,6 +121,8 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             }
 
             this.postingMode = true;
+
+            this.controlPreviewButton();
         },
 
         disablePostingMode: function () {
@@ -185,10 +202,13 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
                     mode: 'edit',
                     params: {
                         required: true,
-                        rows: 1
+                        rowsMin: 1,
+                        rows: 25,
                     },
                     model: this.seed,
                     placeholderText: this.placeholderText
+                }, function (view) {
+                    this.initPostEvents(view);
                 });
                 this.createCollection(function () {
                     this.wait(false);
@@ -198,6 +218,12 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             if (!this.defs.hidden) {
                 this.subscribeToWebSocket();
             }
+
+            this.once('show', function () {
+                if (!this.isSubscribedToWebSocked) {
+                    this.subscribeToWebSocket();
+                }
+            }, this);
 
             this.once('remove', function () {
                 if (this.isSubscribedToWebSocked) {
@@ -281,6 +307,12 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             }, this);
         },
 
+        initPostEvents: function (view) {
+            this.listenTo(view, 'add-files', function (files) {
+                this.getView('attachments').uploadFiles(files);
+            }, this);
+        },
+
         afterRender: function () {
             this.$textarea = this.$el.find('textarea[data-name="post"]');
             this.$attachments = this.$el.find('div.attachments');
@@ -298,33 +330,6 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             if (this.isInternalNoteMode) {
                 this.$el.find('.action[data-action="switchInternalMode"]').addClass('enabled');
             }
-
-            $textarea.off('drop');
-            $textarea.off('dragover');
-            $textarea.off('dragleave');
-
-            $textarea.on('drop', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                var e = e.originalEvent;
-                if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-                    this.getView('attachments').uploadFiles(e.dataTransfer.files);
-                    this.enablePostingMode();
-                }
-                this.$textarea.attr('placeholder', originalPlaceholderText);
-            }.bind(this));
-
-            var originalPlaceholderText = this.$textarea.attr('placeholder');
-
-            $textarea.on('dragover', function (e) {
-                e.preventDefault();
-                this.$textarea.attr('placeholder', this.translate('dropToAttach', 'messages'));
-            }.bind(this));
-
-            $textarea.on('dragleave', function (e) {
-                e.preventDefault();
-                this.$textarea.attr('placeholder', originalPlaceholderText);
-            }.bind(this));
 
             var collection = this.collection;
 
@@ -351,8 +356,13 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
                 }.bind(this), 500);
 
             }, this);
+
             if (!this.defs.hidden) {
                 collection.fetch();
+            } else {
+                this.once('show', function () {
+                    collection.fetch();
+                }, this);
             }
 
             var assignmentPermission = this.getAcl().get('assignmentPermission');
@@ -596,6 +606,17 @@ define('views/stream/panel', ['views/record/panels/relationship', 'lib!Textcompl
             if (this.hasView('list')) {
                 this.getView('list').showNewRecords();
             }
+        },
+
+        preview: function () {
+            this.createView('dialog', 'views/modal', {
+                templateContent: '<div class="complex-text">{{complexText viewObject.options.text linksInNewTab=true}}</div>',
+                text: this.$textarea.val(),
+                headerText: this.translate('Preview'),
+                backdrop: true,
+            }, function (view) {
+                view.render();
+            });
         },
 
     });

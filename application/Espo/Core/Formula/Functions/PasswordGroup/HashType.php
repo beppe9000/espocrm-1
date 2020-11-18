@@ -29,30 +29,33 @@
 
 namespace Espo\Core\Formula\Functions\PasswordGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class HashType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Utils\PasswordHash;
+
+use Espo\Core\Di;
+
+class HashType extends BaseFunction implements
+    Di\ConfigAware
 {
-    protected function init()
-    {
-        $this->addDependency('config');
-    }
+    use Di\ConfigSetter;
 
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        $args = $item->value ?? [];
-
-        if (!is_array($args)) throw new Error();
-        if (count($args) < 1)
-             throw new Error("Formula: password\\hash: no argument.");
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
+        }
 
         $password = $this->evaluate($args[0]);
 
-        if (!is_string($password))
-             throw new Error("Formula: password\\hash: bad argument.");
+        if (!is_string($password)) {
+            $this->throwBadArgumentType(1, 'string');
+        }
 
-        $passwordHash = new \Espo\Core\Utils\PasswordHash($this->getInjection('config'));
+        $passwordHash = new PasswordHash($this->config);
         $hash = $passwordHash->hash($password);
 
         return $hash;

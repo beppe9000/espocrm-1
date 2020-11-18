@@ -29,20 +29,23 @@
 
 namespace Espo\Core\Formula\Functions\ArrayGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class IncludesType extends \Espo\Core\Formula\Functions\Base
+class IncludesType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value') || !is_array($item->value)) {
-            throw new Error('Value for \'Array\\Includes\' item is not array.');
+        $args = $this->evaluate($args);
+
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
-        if (count($item->value) < 2) {
-            throw new Error('Bad arguments passed to \'Array\\Includes\'.');
-        }
-        $list = $this->evaluate($item->value[0]);
-        $needle = $this->evaluate($item->value[1]);
+
+        $list = $args[0];
+        $needle = $args[1];
 
         if (!is_array($list)) {
             return false;

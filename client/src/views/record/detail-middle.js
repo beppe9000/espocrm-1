@@ -43,10 +43,20 @@ define('views/record/detail-middle', 'view', function (Dep) {
         },
 
         showPanel: function (name) {
+            if (this.recordHelper.getPanelStateParam(name, 'hiddenLocked')) return;
+
             if (this.isRendered()) {
                 this.$el.find('.panel[data-name="'+name+'"]').removeClass('hidden');
             }
             this.recordHelper.setPanelStateParam(name, 'hidden', false);
+
+            if (this.options.panelFieldListMap && this.options.panelFieldListMap[name]) {
+                this.options.panelFieldListMap[name].forEach(function (field) {
+                    var view = this.getFieldView(field);
+                    if (!view) return;
+                    view.reRender();
+                }, this);
+            }
         },
 
         hidePanel: function (name) {

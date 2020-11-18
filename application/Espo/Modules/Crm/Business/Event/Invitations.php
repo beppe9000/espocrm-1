@@ -29,39 +29,62 @@
 
 namespace Espo\Modules\Crm\Business\Event;
 
-use \Espo\ORM\Entity;
+use Laminas\Mail\Message;
+
+use Espo\ORM\Entity;
 
 use Espo\Core\Utils\Util;
 
+use Espo\Core\{
+    ORM\EntityManager,
+    Mail\EmailSender,
+    Utils\Config,
+    Utils\File\Manager as FileManager,
+    Utils\DateTime,
+    Utils\NumberUtil,
+    Utils\Language,
+    Utils\TemplateFileManager,
+    Htmlizer\Factory as HtmlizerFactory,
+};
+
 class Invitations
 {
-    protected $entityManager;
-
     protected $smtpParams;
-
-    protected $mailSender;
-
-    protected $config;
-
-    protected $dateTime;
-
-    protected $language;
 
     protected $ics;
 
+    protected $entityManager;
+    protected $emailSender;
+    protected $config;
+    protected $dateTime;
+    protected $language;
+    protected $number;
     protected $templateFileManager;
+    protected $fileManager;
+    protected $htmlizerFactory;
 
-    public function __construct($entityManager, $smtpParams, $mailSender, $config, $fileManager, $dateTime, $number, $language, $templateFileManager)
-    {
+    public function __construct(
+        EntityManager $entityManager,
+        ?array $smtpParams,
+        EmailSender $emailSender,
+        Config $config,
+        FileManager $fileManager,
+        DateTime $dateTime,
+        NumberUtil $number,
+        Language $language,
+        TemplateFileManager $templateFileManager,
+        HtmlizerFactory $htmlizerFactory
+    ) {
         $this->entityManager = $entityManager;
         $this->smtpParams = $smtpParams;
-        $this->mailSender = $mailSender;
+        $this->emailSender = $emailSender;
         $this->config = $config;
         $this->dateTime = $dateTime;
         $this->language = $language;
         $this->number = $number;
         $this->fileManager = $fileManager;
         $this->templateFileManager = $templateFileManager;
+        $this->htmlizerFactory = $htmlizerFactory;
     }
 
     protected function getEntityManager()
@@ -74,7 +97,7 @@ class Invitations
         return $this->config;
     }
 
-    public function sendInvitation(Entity $entity, Entity $invitee, $link)
+    public function sendInvitation(Entity $entity, Entity $invitee, string $link)
     {
         $uid = $this->getEntityManager()->getEntity('UniqueId');
         $uid->set('data', [
@@ -82,7 +105,7 @@ class Invitations
             'eventId' => $entity->id,
             'inviteeId' => $invitee->id,
             'inviteeType' => $invitee->getEntityType(),
-            'link' => $link
+            'link' => $link,
         ]);
 
         if ($entity->get('dateEnd')) {
@@ -144,7 +167,7 @@ class Invitations
         $data['entityType'] = $this->language->translate($entity->getEntityType(), 'scopeNames');
         $data['entityTypeLowerFirst'] = Util::mbLowerCaseFirst($data['entityType']);
 
-        $htmlizer = new \Espo\Core\Htmlizer\Htmlizer($this->fileManager, $dateTime, $this->number, null);
+        $htmlizer = $this->htmlizerFactory->createNoAcl();
 
         $subject = $htmlizer->render($entity, $subjectTpl, 'invitation-email-subject-' . $entity->getEntityType(), $data, true);
         $body = $htmlizer->render($entity, $bodyTpl, 'invitation-email-body-' . $entity->getEntityType(), $data, false);
@@ -161,24 +184,32 @@ class Invitations
             'contents' => $this->getIscContents($entity),
         ]);
 
-        $message = new \Zend\Mail\Message();
+        $message = new Message();
 
-        $emailSender = $this->mailSender;
+        $sender = $this->emailSender->create();
 
         if ($this->smtpParams) {
-            $emailSender->useSmtp($this->smtpParams);
+            $sender->withSmtpParams($this->smtpParams);
         }
-        $emailSender->send($email, [], $message, [$attachment]);
+
+        $sender
+            ->withMessage($message)
+            ->withAttachments([$attachment])
+            ->send($email);
 
         $this->getEntityManager()->removeEntity($email);
     }
 
     protected function getIscContents(Entity $entity)
     {
-        $user = $entity->get('assignedUser');
+        $user = $this->entityManager
+            ->getRepository($entity->getEntityType())
+            ->getRelation($entity, 'assignedUser')
+            ->findOne();
 
         $who = '';
         $email = '';
+
         if ($user) {
             $who = $user->get('name');
             $email = $user->get('emailAddress');

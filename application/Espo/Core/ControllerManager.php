@@ -29,93 +29,46 @@
 
 namespace Espo\Core;
 
-use \Espo\Core\Utils\Util;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\{
+    InjectableFactory,
+    Utils\ClassFinder,
+    Utils\Util,
+    Api\Request,
+    Api\Response,
+    Exceptions\NotFound,
+    Exceptions\BadRequest,
+};
 
+use ReflectionClass;
+use StdClass;
+
+/**
+ * Creates controller instances and processes actions.
+ */
 class ControllerManager
 {
-    private $config;
+    protected $injectableFactory;
+    protected $classFinder;
 
-    private $metadata;
-
-    private $container;
-
-    private $controllersHash = null;
-
-    public function __construct(\Espo\Core\Container $container)
+    public function __construct(InjectableFactory $injectableFactory, ClassFinder $classFinder)
     {
-        $this->container = $container;
-
-        $this->config = $this->container->get('config');
-        $this->metadata = $this->container->get('metadata');
-
-        $this->controllersHash = (object) [];
+        $this->injectableFactory = $injectableFactory;
+        $this->classFinder = $classFinder;
     }
 
-    protected function getConfig()
+    public function process(string $controllerName, string $actionName, Request $request, Response $response)
     {
-        return $this->config;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
-    }
-
-    protected function getControllerClassName($controllerName)
-    {
-        $customClassName = '\\Espo\\Custom\\Controllers\\' . Util::normilizeClassName($controllerName);
-        if (class_exists($customClassName)) {
-            $controllerClassName = $customClassName;
-        } else {
-            $moduleName = $this->metadata->getScopeModuleName($controllerName);
-            if ($moduleName) {
-                $controllerClassName = '\\Espo\\Modules\\' . $moduleName . '\\Controllers\\' . Util::normilizeClassName($controllerName);
-            } else {
-                $controllerClassName = '\\Espo\\Controllers\\' . Util::normilizeClassName($controllerName);
-            }
-        }
-
-        if (!class_exists($controllerClassName)) {
-            throw new NotFound("Controller '$controllerName' is not found");
-        }
-
-        return $controllerClassName;
-    }
-
-    public function createController($name)
-    {
-        $controllerClassName = $this->getControllerClassName($name);
-        $controller = new $controllerClassName($this->container);
-
-        return $controller;
-    }
-
-    public function getController($name)
-    {
-        if (!property_exists($this->controllersHash, $name)) {
-            $this->controllersHash->$name = $this->createController($name);
-        }
-        return $this->controllersHash->$name;
-    }
-
-    public function processRequest(\Espo\Core\Controllers\Base $controller, $actionName, $params, $data, $request, $response = null)
-    {
-        if ($data && stristr($request->getContentType(), 'application/json')) {
-            $data = json_decode($data);
-        }
-
-        if ($actionName == 'index') {
-            $actionName = $controller::$defaultAction;
-        }
+        $controller = $this->createController($controllerName);
 
         $requestMethod = $request->getMethod();
 
+        if ($actionName == 'index') {
+            $actionName = $controller::$defaultAction ?? 'index';
+        }
+
         $actionNameUcfirst = ucfirst($actionName);
 
-        $beforeMethodName = 'before' . $actionNameUcfirst;
         $actionMethodName = 'action' . $actionNameUcfirst;
-        $afterMethodName = 'after' . $actionNameUcfirst;
 
         $fullActionMethodName = strtolower($requestMethod) . ucfirst($actionMethodName);
 
@@ -126,15 +79,28 @@ class ControllerManager
         }
 
         if (!method_exists($controller, $primaryActionMethodName)) {
-            throw new NotFound("Action {$requestMethod} '{$actionName}' does not exist in controller '".$controller->getName()."'.");
+            throw new NotFound(
+                "Action {$requestMethod} '{$actionName}' does not exist in controller '{$controllerName}'."
+            );
         }
 
-        // TODO Remove in 5.1.0
-        if ($data instanceof \stdClass) {
-            if ($this->getMetadata()->get(['app', 'deprecatedControllerActions', $controller->getName(), $primaryActionMethodName])) {
-                $data = get_object_vars($data);
-            }
+        if (
+            $this->useShortParamList($controller, $primaryActionMethodName)
+        ) {
+            return $controller->$primaryActionMethodName($request, $response);
         }
+
+        // Below is a legacy way.
+
+        $data = $request->getBodyContents();
+
+        if ($data && $request->getContentType() === 'application/json') {
+            $data = json_decode($data);
+        }
+
+        $params = $request->getRouteParams();
+
+        $beforeMethodName = 'before' . $actionNameUcfirst;
 
         if (method_exists($controller, $beforeMethodName)) {
             $controller->$beforeMethodName($params, $data, $request, $response);
@@ -142,20 +108,59 @@ class ControllerManager
 
         $result = $controller->$primaryActionMethodName($params, $data, $request, $response);
 
+        $afterMethodName = 'after' . $actionNameUcfirst;
+
         if (method_exists($controller, $afterMethodName)) {
             $controller->$afterMethodName($params, $data, $request, $response);
-        }
-
-        if (is_array($result) || is_bool($result) || $result instanceof \StdClass) {
-            return \Espo\Core\Utils\Json::encode($result);
         }
 
         return $result;
     }
 
-    public function process($controllerName, $actionName, $params, $data, $request, $response = null)
+    protected function useShortParamList(object $controller, string $methodName) : bool
     {
-        $controller = $this->getController($controllerName);
-        return $this->processRequest($controller, $actionName, $params, $data, $request, $response);
+        $class = new ReflectionClass($controller);
+
+        $method = $class->getMethod($methodName);
+
+        $params = $method->getParameters();
+
+        if (count($params) > 0) {
+            $firstParamClass = $params[0]->getClass();
+
+            if (
+                $firstParamClass
+                &&
+                (
+                    $firstParamClass->getName() === Request::class || $firstParamClass->isSubclassOf(Request::class)
+                )
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function getControllerClassName(string $name) : string
+    {
+        $className = $this->classFinder->find('Controllers', $name);
+
+        if (!$className) {
+            throw new NotFound("Controller '{$name}' does not exist.");
+        }
+
+        if (!class_exists($className)) {
+            throw new NotFound("Class not found for controller '{$name}'.");
+        }
+
+        return $className;
+    }
+
+    protected function createController(string $name) : object
+    {
+        return $this->injectableFactory->createWith($this->getControllerClassName($name), [
+            'name' => $name,
+        ]);
     }
 }

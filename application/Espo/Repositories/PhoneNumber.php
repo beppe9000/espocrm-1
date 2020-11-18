@@ -31,27 +31,26 @@ namespace Espo\Repositories;
 
 use Espo\ORM\Entity;
 
-class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
-{
-    protected $processFieldsAfterSaveDisabled = true;
+use Espo\Entities\PhoneNumber as PhoneNumberEntity;
 
-    protected $processFieldsBeforeSaveDisabled = true;
+use Espo\Core\Di;
+
+class PhoneNumber extends \Espo\Core\Repositories\Database implements
+    Di\ApplicationStateAware,
+    Di\AclManagerAware
+{
+    use Di\ApplicationStateSetter;
+    use Di\AclManagerSetter;
+
+    protected $processFieldsAfterSaveDisabled = true;
 
     protected $processFieldsAfterRemoveDisabled = true;
 
     const ERASED_PREFIX = 'ERASED:';
 
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('user');
-        $this->addDependency('acl');
-        $this->addDependency('aclManager');
-    }
-
     protected function getAcl()
     {
-        return $this->getInjection('acl');
+        return $this->acl;
     }
 
     public function getIds($numberList = [])
@@ -87,120 +86,131 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
         return $ids;
     }
 
-    public function getPhoneNumberData(Entity $entity)
+    public function getPhoneNumberData(Entity $entity) : array
     {
-        $data = array();
+        $dataList = [];
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            SELECT phone_number.name, phone_number.type, entity_phone_number.primary, phone_number.opt_out AS optOut, phone_number.invalid
-            FROM entity_phone_number
-            JOIN phone_number ON phone_number.id = entity_phone_number.phone_number_id AND phone_number.deleted = 0
-            WHERE
-            entity_phone_number.entity_id = ".$pdo->quote($entity->id)." AND
-            entity_phone_number.entity_type = ".$pdo->quote($entity->getEntityType())." AND
-            entity_phone_number.deleted = 0
-            ORDER BY entity_phone_number.primary DESC
-        ";
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        if ($rows = $sth->fetchAll()) {
-            foreach ($rows as $row) {
-                $obj = new \StdClass();
-                $obj->phoneNumber = $row['name'];
-                $obj->primary = ($row['primary'] == '1') ? true : false;
-                $obj->type = $row['type'];
-                $obj->optOut = ($row['optOut'] == '1') ? true : false;
-                $obj->invalid = ($row['invalid'] == '1') ? true : false;
+        $numberList = $this
+            ->select(['name', 'type', 'invalid', 'optOut', ['en.primary', 'primary']])
+            ->join(
+                'EntityPhoneNumber',
+                'en',
+                [
+                    'en.phoneNumberId:' => 'id',
+                ]
+            )
+            ->where([
+                'en.entityId' => $entity->id,
+                'en.entityType' => $entity->getEntityType(),
+                'en.deleted' => false,
+            ])
+            ->order('en.primary', true)
+            ->find();
 
-                $data[] = $obj;
-            }
+        foreach ($numberList as $number) {
+            $item = (object) [
+                'phoneNumber' => $number->get('name'),
+                'type' => $number->get('type'),
+                'primary' => $number->get('primary'),
+                'optOut' => $number->get('optOut'),
+                'invalid' => $number->get('invalid'),
+            ];
+            $dataList[] = $item;
         }
 
-        return $data;
+        return $dataList;
     }
 
-    public function getByNumber($number)
+    public function getByNumber(string $number) : ?PhoneNumberEntity
     {
-        return $this->where(array('name' => $number))->findOne();
+        return $this->where(['name' => $number])->findOne();
     }
 
-    public function getEntityListByPhoneNumberId($phoneNumberId, $exceptionEntity = null)
+    public function getEntityListByPhoneNumberId(string $phoneNumberId, ?Entity $exceptionEntity = null) : array
     {
         $entityList = [];
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            SELECT entity_phone_number.entity_type AS 'entityType', entity_phone_number.entity_id AS 'entityId'
-            FROM entity_phone_number
-            WHERE
-                entity_phone_number.phone_number_id = ".$pdo->quote($phoneNumberId)." AND
-                entity_phone_number.deleted = 0
-        ";
+        $where = [
+            'phoneNumberId' => $phoneNumberId,
+        ];
+
         if ($exceptionEntity) {
-            $sql .= "
-                AND (
-                    entity_phone_number.entity_type <> " .$pdo->quote($exceptionEntity->getEntityType()) . "
-                    OR
-                    entity_phone_number.entity_id <> " .$pdo->quote($exceptionEntity->id) . "
-                )
-            ";
+            $where[] = [
+                'OR' => [
+                    'entityType!=' => $exceptionEntity->getEntityType(),
+                    'entityId!=' => $exceptionEntity->id,
+                ]
+            ];
         }
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        while ($row = $sth->fetch()) {
-            if (empty($row['entityType']) || empty($row['entityId'])) continue;
-            if (!$this->getEntityManager()->hasRepository($row['entityType'])) continue;
-            $entity = $this->getEntityManager()->getEntity($row['entityType'], $row['entityId']);
-            if ($entity) {
-                $entityList[] = $entity;
-            }
+        $itemList = $this->getEntityManager()->getRepository('EntityPhoneNumber')
+            ->sth()
+            ->select(['entityType', 'entityId'])
+            ->where($where)
+            ->find();
+
+        foreach ($itemList as $item) {
+            $itemEntityType = $item->get('entityType');
+            $itemEntityId = $item->get('entityId');
+
+            if (!$itemEntityType || !$itemEntityId) continue;
+
+            if (!$this->getEntityManager()->hasRepository($itemEntityType)) continue;
+
+            $entity = $this->getEntityManager()->getEntity($itemEntityType, $itemEntityId);
+
+            if (!$entity) continue;
+
+            $entityList[] = $entity;
         }
 
         return $entityList;
     }
 
-    public function getEntityByPhoneNumberId($phoneNumberId, $entityType = null)
+    public function getEntityByPhoneNumberId(string $phoneNumberId, ?string $entityType = null) : ?Entity
     {
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            SELECT entity_phone_number.entity_type AS 'entityType', entity_phone_number.entity_id AS 'entityId'
-            FROM entity_phone_number
-            WHERE
-                entity_phone_number.phone_number_id = ".$pdo->quote($phoneNumberId)." AND
-                entity_phone_number.deleted = 0
-        ";
+        $where = [
+            'phoneNumberId' => $phoneNumberId,
+        ];
 
         if ($entityType) {
-            $sql .= "
-                AND entity_phone_number.entity_type = " . $pdo->quote($entityType) . "
-            ";
+            $where[] = ['entityType' => $entityType];
         }
 
-        $sql .= "
-            ORDER BY entity_phone_number.primary DESC, FIELD(entity_phone_number.entity_type, 'User', 'Contact', 'Lead', 'Account')
-        ";
+        $itemList = $this->getEntityManager()->getRepository('EntityPhoneNumber')
+            ->sth()
+            ->select(['entityType', 'entityId'])
+            ->where($where)
+            ->limit(0, 20)
+            ->order([
+                ['primary', 'DESC'],
+                ['LIST:entityType:User,Contact,Lead,Account'],
+            ])
+            ->find();
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        while ($row = $sth->fetch()) {
-            if (!empty($row['entityType']) && !empty($row['entityId'])) {
-                if (!$this->getEntityManager()->hasRepository($row['entityType'])) {
-                    return;
+        foreach ($itemList as $item) {
+            $itemEntityType = $item->get('entityType');
+            $itemEntityId = $item->get('entityId');
+
+            if (!$itemEntityType || !$itemEntityId) continue;
+
+            if (!$this->getEntityManager()->hasRepository($itemEntityType)) continue;
+
+            $entity = $this->getEntityManager()->getEntity($itemEntityType, $itemEntityId);
+
+            if ($entity) {
+                if ($entity->getEntityType() === 'User') {
+                    if (!$entity->get('isActive')) continue;
                 }
-                $entity = $this->getEntityManager()->getEntity($row['entityType'], $row['entityId']);
-                if ($entity) {
-                    return $entity;
-                }
+                return $entity;
             }
         }
+
+        return null;
     }
 
     protected function storeEntityPhoneNumberData(Entity $entity)
     {
-        $pdo = $this->getEntityManager()->getPDO();
-
         $phoneNumberValue = $entity->get('phoneNumber');
         if (is_string($phoneNumberValue)) {
             $phoneNumberValue = trim($phoneNumberValue);
@@ -323,23 +333,30 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
 
         foreach ($toRemoveList as $number) {
             $phoneNumber = $this->getByNumber($number);
-            if ($phoneNumber) {
-                $query = "
-                    DELETE FROM  entity_phone_number
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        phone_number_id = ".$pdo->quote($phoneNumber->id)."
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+
+            if (!$phoneNumber) {
+                continue;
             }
+
+            $delete = $this->getEntityManager()->getQueryBuilder()
+                ->delete()
+                ->from('EntityPhoneNumber')
+                ->where([
+                    'entityId' => $entity->id,
+                    'entityType' => $entity->getEntityType(),
+                    'phoneNumberId' => $phoneNumber->id,
+                ])
+                ->build();
+
+            $this->getEntityManager()->getQueryExecutor()->execute($delete);
         }
 
         foreach ($toUpdateList as $number) {
             $phoneNumber = $this->getByNumber($number);
+
             if ($phoneNumber) {
                 $skipSave = $this->checkChangeIsForbidden($phoneNumber, $entity);
+
                 if (!$skipSave) {
                     $phoneNumber->set([
                         'type' => $hash->{$number}['type'],
@@ -347,7 +364,8 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                         'invalid' => $hash->{$number}['invalid'],
                     ]);
                     $this->save($phoneNumber);
-                } else {
+                }
+                else {
                     $revertData[$number] = [
                         'type' => $phoneNumber->get('type'),
                         'optOut' => $phoneNumber->get('optOut'),
@@ -359,6 +377,7 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
 
         foreach ($toCreateList as $number) {
             $phoneNumber = $this->getByNumber($number);
+
             if (!$phoneNumber) {
                 $phoneNumber = $this->get();
 
@@ -369,8 +388,10 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                     'invalid' => $hash->{$number}['invalid'],
                 ]);
                 $this->save($phoneNumber);
-            } else {
+            }
+            else {
                 $skipSave = $this->checkChangeIsForbidden($phoneNumber, $entity);
+
                 if (!$skipSave) {
                     if (
                         $phoneNumber->get('type') != $hash->{$number}['type'] ||
@@ -382,6 +403,7 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                             'optOut' => $hash->{$number}['optOut'],
                             'invalid' => $hash->{$number}['invalid'],
                         ]);
+
                         $this->save($phoneNumber);
                     }
                 } else {
@@ -393,47 +415,52 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                 }
             }
 
-            $query = "
-                INSERT entity_phone_number
-                    (entity_id, entity_type, phone_number_id, `primary`)
-                    VALUES
-                    (
-                        ".$pdo->quote($entity->id).",
-                        ".$pdo->quote($entity->getEntityType()).",
-                        ".$pdo->quote($phoneNumber->id).",
-                        ".$pdo->quote((int)($number === $primary))."
-                    )
-                ON DUPLICATE KEY UPDATE deleted = 0, `primary` = ".$pdo->quote((int)($number === $primary))."
-            ";
-            $this->getEntityManager()->runQuery($query, true);
+            $entityPhoneNumber = $this->getEntityManager()->getEntity('EntityPhoneNumber');
+            $entityPhoneNumber->set([
+                'entityId' => $entity->id,
+                'entityType' => $entity->getEntityType(),
+                'phoneNumberId' => $phoneNumber->id,
+                'primary' => $number === $primary,
+                'deleted' => false,
+            ]);
+
+            $this->getEntityManager()->getMapper('RDB')->insertOnDuplicateUpdate($entityPhoneNumber, [
+                'primary',
+                'deleted',
+            ]);
         }
 
         if ($primary) {
             $phoneNumber = $this->getByNumber($primary);
-            if ($phoneNumber) {
-                $query = "
-                    UPDATE entity_phone_number
-                    SET `primary` = 0
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        `primary` = 1 AND
-                        deleted = 0
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
 
-                $query = "
-                    UPDATE entity_phone_number
-                    SET `primary` = 1
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        phone_number_id = ".$pdo->quote($phoneNumber->id)." AND 
-                        deleted = 0
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+            if ($phoneNumber) {
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityPhoneNumber')
+                    ->set(['primary' => false])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'primary' => true,
+                        'deleted' => false,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
+
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityPhoneNumber')
+                    ->set(['primary' => true])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'phoneNumberId' => $phoneNumber->id,
+                        'deleted' => false,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
             }
         }
 
@@ -451,8 +478,6 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
 
     protected function storeEntityPhoneNumberPrimary(Entity $entity)
     {
-        $pdo = $this->getEntityManager()->getPDO();
-
         if (!$entity->has('phoneNumber')) return;
         $phoneNumberValue = trim($entity->get('phoneNumber'));
 
@@ -468,7 +493,7 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                     if ($entity->has('phoneNumberIsOptedOut')) {
                         $phoneNumberNew->set('optOut', !!$entity->get('phoneNumberIsOptedOut'));
                     }
-                    $defaultType = $this->getEntityManager()->getEspoMetadata()->get('entityDefs.' .  $entity->getEntityType() . '.fields.phoneNumber.defaultType');
+                    $defaultType = $this->getMetadata()->get('entityDefs.' .  $entity->getEntityType() . '.fields.phoneNumber.defaultType');
 
                     $phoneNumberNew->set('type', $defaultType);
 
@@ -489,16 +514,19 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
                     $this->markNumberOptedOut($phoneNumberValue, !!$entity->get('phoneNumberIsOptedOut'));
                 }
 
-                $query = "
-                    UPDATE entity_phone_number
-                    SET `primary` = 1
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        phone_number_id = ".$pdo->quote($phoneNumberNew->id)."
-                ";
-                $sth = $pdo->prepare($query);
-                $sth->execute();
+                $update = $this->getEntityManager()->getQueryBuilder()
+                    ->update()
+                    ->in('EntityPhoneNumber')
+                    ->set( ['primary' => true])
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'phoneNumberId' => $phoneNumberNew->id,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($update);
+
             } else {
                 if (
                     $entity->has('phoneNumberIsOptedOut')
@@ -541,9 +569,19 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
         }
     }
 
+    /**
+     * @todo Move it to another place. ACL should not be in a repository.
+     */
     protected function checkChangeIsForbidden($entity, $excludeEntity)
     {
-        return !$this->getInjection('aclManager')->getImplementation('PhoneNumber')->checkEditInEntity($this->getInjection('user'), $entity, $excludeEntity);
+        if (!$this->applicationState->hasUser()) {
+            return true;
+        }
+
+        $user = $this->applicationState->getUser();
+
+        return !$this->aclManager->getImplementation('PhoneNumber')
+            ->checkEditInEntity($user, $entity, $excludeEntity);
     }
 
     protected function beforeSave(Entity $entity, array $options = [])
@@ -561,11 +599,13 @@ class PhoneNumber extends \Espo\Core\ORM\Repositories\RDB
         }
     }
 
-    public function markNumberOptedOut($number, $isOptedOut = true)
+    public function markNumberOptedOut(string $number, bool $isOptedOut = true)
     {
         $number = $this->getByNumber($number);
+
         if ($number) {
             $number->set('optOut', !!$isOptedOut);
+
             $this->save($number);
         }
     }

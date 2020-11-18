@@ -31,6 +31,14 @@ namespace tests\unit\Espo\Core\Utils;
 
 use tests\unit\ReflectionHelper;
 
+use Espo\Core\{
+    Utils\Route,
+    Utils\Config,
+    Utils\File\Manager as FileManager,
+    Utils\Metadata,
+    Utils\DataCache,
+};
+
 class RouteTest extends \PHPUnit\Framework\TestCase
 {
     protected $object;
@@ -41,24 +49,17 @@ class RouteTest extends \PHPUnit\Framework\TestCase
 
     protected function setUp() : void
     {
-        $this->objects['container'] = $this->getMockBuilder('\\Espo\\Core\\Container')->disableOriginalConstructor()->getMock();
+        $this->config = $this->getMockBuilder(Config::class)->disableOriginalConstructor()->getMock();
+        $this->fileManager = new FileManager();
 
-        $this->objects['config'] = $this->getMockBuilder('\\Espo\\Core\\Utils\\Config')->disableOriginalConstructor()->getMock();
-        $this->objects['fileManager'] = new \Espo\Core\Utils\File\Manager();
-        $this->objects['metadata'] = $this->getMockBuilder('\\Espo\\Core\\Utils\\Metadata')->disableOriginalConstructor()->getMock();
+        $this->metadata = $this->getMockBuilder(Metadata::class)->disableOriginalConstructor()->getMock();
 
-        $map = array(
-            array('config', $this->objects['config']),
-            array('metadata', $this->objects['metadata']),
-            array('fileManager', $this->objects['fileManager']),
+        $this->dataCache = $this->getMockBuilder(DataCache::class)->disableOriginalConstructor()->getMock();
+
+        $this->object = new Route(
+            $this->config, $this->metadata, $this->fileManager, $this->dataCache
         );
 
-        $this->objects['container']
-            ->expects($this->any())
-            ->method('get')
-            ->will($this->returnValueMap($map));
-
-        $this->object = new \Espo\Core\Utils\Route($this->objects['config'], $this->objects['metadata'], $this->objects['fileManager']);
         $this->reflection = new ReflectionHelper($this->object);
     }
 
@@ -76,7 +77,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             'customPath' => $this->filesPath . '/testCase1/custom/Espo/Custom/Resources/routes.json',
         ));
 
-        $this->objects['metadata']
+        $this->metadata
             ->expects($this->once())
             ->method('getModuleList')
             ->will($this->returnValue(array(
@@ -85,7 +86,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
 
         $result = array (
           array (
-            'route' => '/Custom/:scope/:id/:name',
+            'route' => '/Custom/{scope}/{id}/{name}',
             'method' => 'get',
             'params' =>
             array (
@@ -97,7 +98,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/Activities/:scope/:id/:name',
+            'route' => '/Activities/{scope}/{id}/{name}',
             'method' => 'get',
             'params' =>
             array (
@@ -135,7 +136,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'post',
             'params' =>
             array (
@@ -144,7 +145,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'get',
             'params' =>
             array (
@@ -165,7 +166,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             'customPath' => $this->filesPath . '/testCase2/custom/Espo/Custom/Resources/routes.json',
         ));
 
-        $this->objects['metadata']
+        $this->metadata
             ->expects($this->once())
             ->method('getModuleList')
             ->will($this->returnValue(array(
@@ -175,7 +176,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
 
         $result = array (
           array (
-            'route' => '/Activities/:scope/:id/:name',
+            'route' => '/Activities/{scope}/{id}/{name}',
             'method' => 'get',
             'params' =>
             array (
@@ -222,7 +223,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'post',
             'params' =>
             array (
@@ -231,7 +232,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'get',
             'params' =>
             array (
@@ -252,7 +253,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             'customPath' => $this->filesPath . '/testCase3/custom/Espo/Custom/Resources/routes.json',
         ));
 
-        $this->objects['metadata']
+        $this->metadata
             ->expects($this->once())
             ->method('getModuleList')
             ->will($this->returnValue(array(
@@ -262,7 +263,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
 
         $result = array (
           array (
-            'route' => '/Activities/:scope/:id/:name',
+            'route' => '/Activities/{scope}/{id}/{name}',
             'method' => 'get',
             'params' =>
             array (
@@ -309,7 +310,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'post',
             'params' =>
             array (
@@ -318,7 +319,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
             ),
           ),
           array (
-            'route' => '/:controller/action/:action',
+            'route' => '/{controller}/action/{action}',
             'method' => 'get',
             'params' =>
             array (
@@ -342,7 +343,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
 
         $this->reflection->setProperty('paths', $paths);
 
-        $this->objects['metadata']
+        $this->metadata
             ->expects($this->once())
             ->method('getModuleList')
             ->will($this->returnValue(array(
@@ -354,7 +355,7 @@ class RouteTest extends \PHPUnit\Framework\TestCase
         // prepare expected result
         $result = [
             [
-                'route'  => '/Activities/:scope/:id/:name',
+                'route'  => '/Activities/{scope}/{id}/{name}',
                 'method' => 'get',
                 'params' => [
                     'controller' => 'TestExt',

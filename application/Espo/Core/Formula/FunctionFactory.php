@@ -29,34 +29,38 @@
 
 namespace Espo\Core\Formula;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\ORM\Entity;
+use Espo\Core\Formula\Exceptions\UnknownFunction;
+
+use Espo\ORM\Entity;
+
+use Espo\Core\InjectableFactory;
+
+use StdClass;
 
 class FunctionFactory
 {
-    private $container;
+    private $processor;
+
+    private $injectableFactory;
+
+    private $attributeFetcher;
 
     private $classNameMap;
 
-    public function __construct($container, AttributeFetcher $attributeFetcher, $classNameMap = null)
-    {
-        $this->container = $container;
+    public function __construct(
+        Processor $processor,
+        InjectableFactory $injectableFactory,
+        AttributeFetcher $attributeFetcher,
+        ?array $classNameMap = null
+    ) {
+        $this->processor = $processor;
+        $this->injectableFactory = $injectableFactory;
         $this->attributeFetcher = $attributeFetcher;
         $this->classNameMap = $classNameMap;
     }
 
-    public function create(\StdClass $item, $entity, \StdClass $variables)
+    public function create(string $name, ?Entity $entity = null, ?StdClass $variables = null)
     {
-        if (!isset($item->type)) {
-            throw new Error('Missing type');
-        }
-
-        if (!is_string($item->type)) {
-            throw new Error('Bad type');
-        }
-
-        $name = $item->type;
-
         if ($this->classNameMap && array_key_exists($name, $this->classNameMap)) {
             $className = $this->classNameMap[$name];
         } else {
@@ -67,27 +71,26 @@ class FunctionFactory
                 }
                 $arr[$i] = ucfirst($part);
             }
-            $name = implode('\\', $arr);
-            $className = '\\Espo\\Core\\Formula\\Functions\\' . $name . 'Type';
+            $typeName = implode('\\', $arr);
+            $className = 'Espo\\Core\\Formula\\Functions\\' . $typeName . 'Type';
         }
 
         if (!class_exists($className)) {
-            throw new Error('Class ' . $className . ' was not found.');
+            throw new UnknownFunction("Unknown function: " . $name);
         }
 
-        $object = new $className($this, $entity, $variables);
+        $object = $this->injectableFactory->createWith($className, [
+            'name' => $name,
+            'processor' => $this->processor,
+            'entity' => $entity,
+            'variables' => $variables,
+            'attributeFetcher' => $this->attributeFetcher,
+        ]);
 
-        $dependencyList = $object->getDependencyList();
-        foreach ($dependencyList as $name) {
-            if (!$this->container) {
-                throw new Error('Container required but not passed.');
-            }
-            $object->inject($name, $this->container->get($name));
-        }
-
-        if (property_exists($className, 'hasAttributeFetcher')) {
+        if (property_exists($className, 'hasAttributeFetcher') || method_exists($className, 'setAttributeFetcher')) {
             $object->setAttributeFetcher($this->attributeFetcher);
         }
+
         return $object;
     }
 }

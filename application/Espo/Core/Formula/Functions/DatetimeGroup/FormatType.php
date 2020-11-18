@@ -29,44 +29,40 @@
 
 namespace Espo\Core\Formula\Functions\DateTimeGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Di;
 
-class FormatType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+class FormatType extends BaseFunction implements Di\DateTimeAware
 {
-    protected function init()
+    use Di\DateTimeSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('dateTime');
-    }
+        $args = $this->evaluate($args);
 
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            return true;
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 1) {
-             throw new Error();
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
         }
 
         $timezone = null;
-        if (count($item->value) > 1) {
-            $timezone = $this->evaluate($item->value[1]);
+        if (count($args) > 1) {
+            $timezone = $args[1];
         }
-        $value = $this->evaluate($item->value[0]);
+        $value = $args[0];
 
         $format = null;
-        if (count($item->value) > 2) {
-            $format = $this->evaluate($item->value[2]);
+        if (count($args) > 2) {
+            $format = $args[2];
         }
 
         if (strlen($value) > 11) {
-            return $this->getInjection('dateTime')->convertSystemDateTime($value, $timezone, $format);
+            return $this->dateTime->convertSystemDateTime($value, $timezone, $format);
         } else {
-            return $this->getInjection('dateTime')->convertSystemDate($value, $format);
+            return $this->dateTime->convertSystemDate($value, $format);
         }
     }
 }

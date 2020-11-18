@@ -22,11 +22,15 @@
             "trim": true
         },
         "port": {
-            "type": "varchar",
-            "default": "143"
+            "type": "int",
+            "min": 0,
+            "max": 65535,
+            "default": 993
         },
-        "ssl": {
-            "type": "bool"
+        "security": {
+            "type": "enum",
+            "default": "SSL",
+            "options": ["", "SSL", "TLS"]
         },
         "username": {
             "type": "varchar",
@@ -42,8 +46,7 @@
             "tooltip": true
         },
         "fetchSince": {
-            "type": "date",
-            "required": true
+            "type": "date"
         },
         "fetchData": {
             "type": "jsonObject",
@@ -82,7 +85,8 @@
             "default": true
         },
         "useSmtp": {
-            "type": "bool"
+            "type": "bool",
+            "tooltip": true
         },
         "smtpIsShared": {
             "type": "bool",
@@ -99,7 +103,7 @@
         "smtpPort": {
             "type": "int",
             "min": 0,
-            "max": 9999,
+            "max": 65535,
             "default": 587
         },
         "smtpAuth": {
@@ -157,6 +161,14 @@
         },
         "fromName": {
             "type": "varchar"
+        },
+        "imapHandler": {
+            "type": "varchar",
+            "readOnly": true
+        },
+        "smtpHandler": {
+            "type": "varchar",
+            "readOnly": true
         },
         "createdAt": {
             "type": "datetime",

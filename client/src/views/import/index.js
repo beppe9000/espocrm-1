@@ -25,7 +25,8 @@
  * In accordance with Section 7(b) of the GNU General Public License version 3,
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
-Espo.define('views/import/index', 'view', function (Dep) {
+
+define('views/import/index', 'view', function (Dep) {
 
     return Dep.extend({
 
@@ -33,7 +34,6 @@ Espo.define('views/import/index', 'view', function (Dep) {
 
         data: function () {
             return {
-
             };
         },
 
@@ -42,10 +42,29 @@ Espo.define('views/import/index', 'view', function (Dep) {
         fileContents: null,
 
         setup: function () {
-            this.entityType = this.options.entityType || false;
+            this.entityType = this.options.entityType || null;
+
+            this.startFromStep = 1;
+
+            if (this.options.formData || this.options.fileContents) {
+                this.formData = this.options.formData || {};
+                this.fileContents = this.options.fileContents || null;
+
+                this.entityType = this.formData.entityType || null;
+
+                if (this.options.step) {
+                    this.startFromStep = this.options.step;
+                }
+            }
         },
 
         changeStep: function (num, result) {
+            this.step = num;
+
+            if (num > 1) {
+                this.setConfirmLeaveOut(true);
+            }
+
             this.createView('step', 'views/import/step' + num.toString(), {
                 el: this.options.el + ' > .import-container',
                 entityType: this.entityType,
@@ -54,15 +73,25 @@ Espo.define('views/import/index', 'view', function (Dep) {
             }, function (view) {
                 view.render();
             });
+
+            var url = '#Import';
+            if (this.step > 1) {
+                url += '/index/step=' + this.step;
+            }
+            this.getRouter().navigate(url, {trigger: false})
         },
 
         afterRender: function () {
-            this.changeStep(1);
+            this.changeStep(this.startFromStep);
         },
 
         updatePageTitle: function () {
             this.setPageTitle(this.getLanguage().translate('Import', 'labels', 'Admin'));
-        }
+        },
+
+        setConfirmLeaveOut: function (value) {
+            this.getRouter().confirmLeaveOut = value;
+        },
 
     });
 });

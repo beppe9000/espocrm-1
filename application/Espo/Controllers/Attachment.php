@@ -29,8 +29,8 @@
 
 namespace Espo\Controllers;
 
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
 
 class Attachment extends \Espo\Core\Controllers\Record
 {
@@ -56,5 +56,22 @@ class Attachment extends \Espo\Core\Controllers\Record
         if (empty($data->field)) throw new BadRequest('postActionGetCopiedAttachment copy: No field specified');
 
         return $this->getRecordService()->getCopiedAttachment($data)->getValueMap();
+    }
+
+    public function getActionFile($params, $data, $request, $response)
+    {
+        $id = $params['id'] ?? null;
+
+        if (!$id) throw new BadRequest();
+
+        $fileData = $this->getRecordService()->getFileData($id);
+
+        $response->setHeader('Content-Type', $fileData->type);
+        $response->setHeader('Content-Disposition', 'Content-Disposition: attachment; filename="'.$fileData->name.'"');
+        if ($fileData->size) {
+            $response->setHeader('Content-Length', $fileData->size);
+        }
+
+        return $fileData->contents;
     }
 }

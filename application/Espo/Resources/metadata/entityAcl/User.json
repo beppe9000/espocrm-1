@@ -26,16 +26,7 @@
             "readOnly": true,
             "onlyAdmin": true
         },
-        "isAdmin": {
-            "readOnly": true
-        },
-        "isSuperAdmin": {
-            "readOnly": true
-        },
         "isActive": {
-            "nonAdminReadOnly": true
-        },
-        "isPortalUser": {
             "nonAdminReadOnly": true
         },
         "teams": {
@@ -58,6 +49,12 @@
         },
         "type": {
             "nonAdminReadOnly": true
+        },
+        "auth2FA": {
+            "onlyAdmin": true
+        },
+        "userData": {
+            "internal": true
         }
     },
     "links": {
@@ -69,6 +66,9 @@
         },
         "preferences": {
             "onlyAdmin": true
+        },
+        "userData": {
+            "internal": true
         }
     }
 }

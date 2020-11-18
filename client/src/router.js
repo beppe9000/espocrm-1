@@ -162,6 +162,16 @@ define('router', [], function () {
             this.on('route', function (name, args) {
                 this.history.push(Backbone.history.fragment);
             });
+
+            window.addEventListener('beforeunload', function (e)  {
+                e = e || window.event;
+
+                if (this.confirmLeaveOut) {
+                    e.preventDefault();
+                    e.returnValue = this.confirmLeaveOutMessage;
+                    return this.confirmLeaveOutMessage;
+                }
+            }.bind(this));
         },
 
         getCurrentUrl: function () {
@@ -169,20 +179,32 @@ define('router', [], function () {
         },
 
         checkConfirmLeaveOut: function (callback, context, navigateBack) {
+            if (this.confirmLeaveOutDisplayed) {
+                this.navigateBack({trigger: false});
+                this.confirmLeaveOutCanceled = true;
+                return;
+            }
             context = context || this;
             if (this.confirmLeaveOut) {
+                this.confirmLeaveOutDisplayed = true;
+                this.confirmLeaveOutCanceled = false;
                 Espo.Ui.confirm(this.confirmLeaveOutMessage, {
                     confirmText: this.confirmLeaveOutConfirmText,
                     cancelText: this.confirmLeaveOutCancelText,
                     backdrop: true,
                     cancelCallback: function () {
+                        this.confirmLeaveOutDisplayed = false;
                         if (navigateBack) {
                             this.navigateBack({trigger: false});
                         }
                     }.bind(this)
                 }, function () {
+                    this.confirmLeaveOutDisplayed = false;
                     this.confirmLeaveOut = false;
-                    callback.call(context);
+
+                    if (!this.confirmLeaveOutCanceled) {
+                        callback.call(context);
+                    }
                 }.bind(this));
             } else {
                 callback.call(context);

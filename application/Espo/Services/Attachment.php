@@ -29,12 +29,12 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-use \Espo\Core\Exceptions\BadRequest;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
 
 class Attachment extends Record
 {
@@ -44,6 +44,10 @@ class Attachment extends Record
 
     protected $inlineAttachmentFieldTypeList = ['wysiwyg'];
 
+    protected $adminOnlyHavingInlineAttachmentsEntityTypeList = [
+        'TemplateManager',
+    ];
+
     protected $imageTypeList = [
         'image/png',
         'image/jpeg',
@@ -51,7 +55,7 @@ class Attachment extends Record
         'image/webp',
     ];
 
-    public function upload($fileData)
+    public function upload($fileData) : Entity
     {
         if (!$this->getAcl()->checkScope('Attachment', 'create')) {
             throw new Forbidden();
@@ -72,7 +76,14 @@ class Attachment extends Record
         return $attachment;
     }
 
-    public function create($data)
+    protected function afterCreateEntity(Entity $entity, $data)
+    {
+        if (!empty($data->file)) {
+            $entity->clear('contents');
+        }
+    }
+
+    protected function handleCreateInput($data)
     {
         if (!empty($data->file)) {
             $arr = explode(',', $data->file);
@@ -133,14 +144,6 @@ class Attachment extends Record
                 throw new BadRequest("Not supported attachment role.");
             }
         }
-
-        $entity = parent::create($data);
-
-        if (!empty($data->file)) {
-            $entity->clear('contents');
-        }
-
-        return $entity;
     }
 
     protected function beforeCreateEntity(Entity $entity, $data)
@@ -161,12 +164,24 @@ class Attachment extends Record
 
     protected function checkAttachmentField($relatedEntityType, $field, $role = 'Attachment')
     {
+        if (
+            $this->getUser()->isAdmin()
+            &&
+            $role === 'Inline Attachment'
+            &&
+            in_array($relatedEntityType, $this->adminOnlyHavingInlineAttachmentsEntityTypeList)
+        ) {
+            return;
+        }
+
         $fieldType = $this->getMetadata()->get(['entityDefs', $relatedEntityType, 'fields', $field, 'type']);
+
         if (!$fieldType) {
             throw new Error("Field '{$field}' does not exist.");
         }
 
         $attachmentFieldTypeListParam = lcfirst(str_replace(' ', '', $role)) . 'FieldTypeList';
+
         if (!in_array($fieldType, $this->$attachmentFieldTypeListParam)) {
             throw new Error("Field type '{$fieldType}' is not allowed for {$role}.");
         }
@@ -297,7 +312,7 @@ class Attachment extends Record
             $opts[\CURLOPT_HEADER] = true;
             $opts[\CURLOPT_BINARYTRANSFER] = true;
             $opts[\CURLOPT_VERBOSE] = true;
-            $opts[\CURLOPT_SSL_VERIFYPEER] = false;
+            $opts[\CURLOPT_SSL_VERIFYPEER] = true;
             $opts[\CURLOPT_SSL_VERIFYHOST] = 2;
             $opts[\CURLOPT_RETURNTRANSFER] = true;
             $opts[\CURLOPT_FOLLOWLOCATION] = true;
@@ -354,5 +369,20 @@ class Attachment extends Record
             curl_close($ch);
         }
         return null;
+    }
+
+    public function getFileData(string $id)
+    {
+        $attachment = $this->getEntity($id);
+        if (!$attachment) throw new NotFound();
+
+        $data = (object) [
+            'name' => $attachment->get('name'),
+            'type' => $attachment->get('type'),
+            'contents' => $this->getRepository()->getContents($attachment),
+            'size' => $attachment->get('size'),
+        ];
+
+        return $data;
     }
 }

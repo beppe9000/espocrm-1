@@ -2,7 +2,12 @@
     "fields": {
         "name": {
             "type": "personName",
-            "isPersonalData": true
+            "isPersonalData": true,
+            "dependeeAttributeList": [
+                "emailAddress",
+                "phoneNumber",
+                "accountName"
+            ]
         },
         "salutationName": {
             "type": "enum",
@@ -56,6 +61,7 @@
         },
         "opportunityAmount": {
             "type": "currency",
+            "min": 0,
             "audited": true
         },
         "opportunityAmountConverted": {
@@ -146,6 +152,7 @@
         "acceptanceStatusMeetings": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -156,6 +163,7 @@
         "acceptanceStatusCalls": {
             "type": "enum",
             "notStorable": true,
+            "directUpdateDisabled": true,
             "layoutAvailabilityList": ["filters"],
             "importDisabled": true,
             "exportDisabled": true,
@@ -237,14 +245,20 @@
             "entity": "Meeting",
             "foreign": "leads",
             "layoutRelationshipsDisabled": true,
-            "audited": true
+            "audited": true,
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "calls": {
             "type": "hasMany",
             "entity": "Call",
             "foreign": "leads",
             "layoutRelationshipsDisabled": true,
-            "audited": true
+            "audited": true,
+            "columnAttributeMap": {
+                "status": "acceptanceStatus"
+            }
         },
         "tasks": {
             "type": "hasChildren",
@@ -293,7 +307,10 @@
         "targetLists": {
             "type": "hasMany",
             "entity": "TargetList",
-            "foreign": "leads"
+            "foreign": "leads",
+            "columnAttributeMap": {
+                "optedOut": "targetListIsOptedOut"
+            }
         },
         "documents": {
             "type": "hasMany",
@@ -343,6 +360,10 @@
         },
         "createdAtStatus": {
             "columns": ["createdAt", "status"]
+        },
+        "createdAtId": {
+            "unique": true,
+            "columns": ["createdAt", "id"]
         },
         "assignedUser": {
             "columns": ["assignedUserId", "deleted"]

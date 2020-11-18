@@ -7,11 +7,15 @@
       },
       {
          "name":"default",
-         "type":"varchar"
+         "type":"varchar",
+         "trim": true
       },
       {
          "name":"maxLength",
-         "type":"int"
+         "type":"int",
+         "default": 150,
+         "min": 1,
+         "max": 65535
       },
       {
          "name":"trim",

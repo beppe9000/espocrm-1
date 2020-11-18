@@ -29,21 +29,19 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
 
-class ExternalAccount extends Record
+use Espo\Core\Di;
+
+class ExternalAccount extends Record implements Di\HookManagerAware
 {
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('hookManager');
-    }
+    use Di\HookManagerSetter;
 
-    protected function getClient($integration, $id)
+    protected function getClient(string $integration, string $id)
     {
         $integrationEntity = $this->getEntityManager()->getEntity('Integration', $integration);
 
@@ -56,16 +54,18 @@ class ExternalAccount extends Record
             throw new Error("{$integration} is disabled.");
         }
 
-        $factory = new \Espo\Core\ExternalAccount\ClientManager($this->getEntityManager(), $this->getMetadata(), $this->getConfig());
+        $factory = new \Espo\Core\ExternalAccount\ClientManager(
+            $this->getEntityManager(), $this->getMetadata(), $this->getConfig(), $this->getInjection('injectableFactory')
+        );
         return $factory->create($integration, $id);
     }
 
-    public function getExternalAccountEntity($integration, $userId)
+    public function getExternalAccountEntity(string $integration, string $userId)
     {
         return $this->getEntityManager()->getEntity('ExternalAccount', $integration . '__' . $userId);
     }
 
-    public function ping($integration, $userId)
+    public function ping(string $integration, string $userId)
     {
         $entity = $this->getExternalAccountEntity($integration, $userId);
         try {
@@ -74,9 +74,11 @@ class ExternalAccount extends Record
                 return $client->ping();
             }
         } catch (\Exception $e) {}
+
+        return false;
     }
 
-    public function authorizationCode($integration, $userId, $code)
+    public function authorizationCode(string $integration, string $userId, string $code)
     {
         $entity = $this->getExternalAccountEntity($integration, $userId);
         if (!$entity) {
@@ -92,11 +94,12 @@ class ExternalAccount extends Record
                 $entity->clear('accessToken');
                 $entity->clear('refreshToken');
                 $entity->clear('tokenType');
+                $entity->clear('expiresAt');
                 foreach ($result as $name => $value) {
                     $entity->set($name, $value);
                 }
                 $this->getEntityManager()->saveEntity($entity);
-                $this->getInjection('hookManager')->process('ExternalAccount', 'afterConnect', $entity, [
+                $this->hookManager->process('ExternalAccount', 'afterConnect', $entity, [
                     'integration' => $integration,
                     'userId' => $userId,
                     'code' => $code,
@@ -108,5 +111,29 @@ class ExternalAccount extends Record
         } else {
             throw new Error("Could not load client for {$integration}.");
         }
+    }
+
+    public function read(string $id) : Entity
+    {
+        list($integration, $userId) = explode('__', $id);
+
+        if ($this->getUser()->id != $userId && !$this->getUser()->isAdmin()) {
+            throw new Forbidden();
+        }
+
+        $entity = $this->getEntityManager()->getEntity('ExternalAccount', $id);
+
+        if (!$entity) throw new NotFoundSilent("Record does not exist.");
+
+        list($integration, $id) = explode('__', $entity->id);
+
+        $externalAccountSecretAttributeList = $this->getMetadata()->get(
+            ['integrations', $integration, 'externalAccountSecretAttributeList']) ?? [];
+
+        foreach ($externalAccountSecretAttributeList as $a) {
+            $entity->clear($a);
+        }
+
+        return $entity;
     }
 }

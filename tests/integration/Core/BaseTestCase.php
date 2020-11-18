@@ -29,6 +29,13 @@
 
 namespace tests\integration\Core;
 
+use Espo\Core\Api\RequestWrapper;
+use Espo\Core\Api\ResponseWrapper;
+
+use Slim\Psr7\Factory\RequestFactory;
+use Slim\Psr7\Factory\ResponseFactory;
+use Slim\Psr7\Factory\StreamFactory;
+
 abstract class BaseTestCase extends \PHPUnit\Framework\TestCase
 {
     protected $espoTester;
@@ -67,20 +74,23 @@ abstract class BaseTestCase extends \PHPUnit\Framework\TestCase
 
     protected $initData = null;
 
+    protected $authenticationMethod = null;
+
     protected function createApplication($clearCache = true, $portalId = null)
     {
         return $this->espoTester->getApplication(true, $clearCache, $portalId);
     }
 
-    protected function auth($userName, $password = null, $portalId = null, $authenticationMethod = null)
-    {
+    protected function auth(
+        $userName = null, $password = null, $portalId = null, $authenticationMethod = null, ?RequestWrapper $request = null
+    ) {
         $this->userName = $userName;
         $this->password = $password;
         $this->portalId = $portalId;
         $this->authenticationMethod = $authenticationMethod;
 
         if (isset($this->espoTester)) {
-            $this->espoTester->auth($userName, $password, $portalId, $authenticationMethod);
+            $this->espoTester->auth($userName, $password, $portalId, $authenticationMethod, $request);
         }
     }
 
@@ -162,28 +172,29 @@ abstract class BaseTestCase extends \PHPUnit\Framework\TestCase
 
     }
 
-    /**
-     * Create Slim request object
-     *
-     * @param  string $method
-     * @param  array  $params
-     * @param  array  $envParams  E.g. 'REQUEST_METHOD' => 'GET', 'QUERY_STRING' => 'name=John&age=30'. More details \Slim\Environment::mock()
-     *
-     * @return \Slim\Http\Request
-     */
-    protected function createRequest($method, array $params = array(), array $envParams = array())
+    protected function createRequest(
+        string $method, array $queryParams = [], array $headers = [], ?string $body = null, array $routeParams = []
+    ) : RequestWrapper {
+        $request = (new RequestFactory())->createRequest($method, 'http://localhost/?' . http_build_query($queryParams));
+
+        foreach ($headers as $name => $value) {
+            $request = $request->withHeader($name, $value);
+        }
+
+        if ($body) {
+            $request = $request->withBody(
+                (new StreamFactory)->createStream($body)
+            );
+        }
+
+        return new RequestWrapper($request, '', $routeParams);
+    }
+
+    protected function createResponse()
     {
-        if (!isset($envParams['REQUEST_METHOD'])) {
-            $envParams['REQUEST_METHOD'] = strtoupper($method);
-        }
-
-        if (!isset($envParams['QUERY_STRING'])) {
-            $envParams['QUERY_STRING'] = http_build_query($params);
-        }
-
-        $slimEnvironment = \Slim\Environment::mock($envParams);
-
-        return new \Slim\Http\Request($slimEnvironment);
+        return new ResponseWrapper(
+            (new ResponseFactory())->createResponse()
+        );
     }
 
     protected function setData(array $data)

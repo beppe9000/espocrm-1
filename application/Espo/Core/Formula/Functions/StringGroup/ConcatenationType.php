@@ -29,23 +29,18 @@
 
 namespace Espo\Core\Formula\Functions\StringGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class ConcatenationType extends \Espo\Core\Formula\Functions\Base
+class ConcatenationType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return '';
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error('Value for \'Concatenation\' item is not array.');
-        }
-
         $result = '';
 
-        foreach ($item->value as $subItem) {
+        foreach ($args as $subItem) {
             $part = $this->evaluate($subItem);
 
             if (!is_string($part)) {

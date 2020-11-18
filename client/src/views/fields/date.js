@@ -44,17 +44,25 @@ define('views/fields/date', 'views/fields/base', function (Dep) {
 
         validations: ['required', 'date', 'after', 'before'],
 
-        searchTypeList: ['lastSevenDays', 'ever', 'isEmpty', 'currentMonth', 'lastMonth', 'nextMonth', 'currentQuarter', 'lastQuarter', 'currentYear', 'lastYear', 'today', 'past', 'future', 'lastXDays', 'nextXDays', 'olderThanXDays', 'afterXDays', 'on', 'after', 'before', 'between'],
+        searchTypeList: [
+            'lastSevenDays', 'ever', 'isEmpty', 'currentMonth', 'lastMonth', 'nextMonth', 'currentQuarter',
+            'lastQuarter', 'currentYear', 'lastYear', 'today', 'past', 'future', 'lastXDays', 'nextXDays',
+            'olderThanXDays', 'afterXDays', 'on', 'after', 'before', 'between',
+        ],
+
+        initialSearchIsNotIdle: true,
 
         setup: function () {
             Dep.prototype.setup.call(this);
 
             if (this.getConfig().get('fiscalYearShift')) {
                 this.searchTypeList = Espo.Utils.clone(this.searchTypeList);
+
                 if (this.getConfig().get('fiscalYearShift') % 3 != 0) {
                     this.searchTypeList.push('currentFiscalQuarter');
                     this.searchTypeList.push('lastFiscalQuarter');
                 }
+
                 this.searchTypeList.push('currentFiscalYear');
                 this.searchTypeList.push('lastFiscalYear');
             }
@@ -98,39 +106,53 @@ define('views/fields/date', 'views/fields/base', function (Dep) {
             }
 
             if (this.mode == 'list' || this.mode == 'detail' || this.mode == 'listLink') {
-                if (this.getConfig().get('readableDateFormatDisabled') || this.params.useNumericFormat) {
-                    return this.getDateTime().toDisplayDate(value);
-                }
-
-                var d = moment.tz(value + ' OO:OO:00', this.getDateTime().internalDateTimeFormat, this.getDateTime().getTimeZone());
-
-                var today = moment().tz(this.getDateTime().getTimeZone()).startOf('day');
-                var dt = today.clone();
-
-                var ranges = {
-                    'today': [dt.unix(), dt.add(1, 'days').unix()],
-                    'tomorrow': [dt.unix(), dt.add(1, 'days').unix()],
-                    'yesterday': [dt.add(-3, 'days').unix(), dt.add(1, 'days').unix()]
-                };
-
-                if (d.unix() >= ranges['today'][0] && d.unix() < ranges['today'][1]) {
-                    return this.translate('Today');
-                } else if (d.unix() >= ranges['tomorrow'][0] && d.unix() < ranges['tomorrow'][1]) {
-                    return this.translate('Tomorrow');
-                } else if (d.unix() >= ranges['yesterday'][0] && d.unix() < ranges['yesterday'][1]) {
-                    return this.translate('Yesterday');
-                }
-
-                var readableFormat = this.getDateTime().getReadableDateFormat();
-
-                if (d.format('YYYY') == today.format('YYYY')) {
-                    return d.format(readableFormat);
-                } else {
-                    return d.format(readableFormat + ', YYYY');
-                }
+                return this.convertDateValueForDetail(value);
             }
 
             return this.getDateTime().toDisplayDate(value);
+        },
+
+        convertDateValueForDetail: function (value) {
+            if (this.getConfig().get('readableDateFormatDisabled') || this.params.useNumericFormat) {
+                return this.getDateTime().toDisplayDate(value);
+            }
+
+            var timezone = this.getDateTime().getTimeZone();
+            var internalDateTimeFormat = this.getDateTime().internalDateTimeFormat;
+            var readableFormat = this.getDateTime().getReadableDateFormat();
+            var valueWithTime = value + ' 00:00:00';
+
+            var today = moment().tz(timezone).startOf('day');
+            var dateTime = moment.tz(valueWithTime, internalDateTimeFormat, timezone);
+
+            var temp = today.clone();
+
+            var ranges = {
+                'today': [temp.unix(), temp.add(1, 'days').unix()],
+                'tomorrow': [temp.unix(), temp.add(1, 'days').unix()],
+                'yesterday': [temp.add(-3, 'days').unix(), temp.add(1, 'days').unix()],
+            };
+
+            if (dateTime.unix() >= ranges['today'][0] && dateTime.unix() < ranges['today'][1]) {
+                return this.translate('Today');
+            }
+
+            if (dateTime.unix() >= ranges['tomorrow'][0] && dateTime.unix() < ranges['tomorrow'][1]) {
+                return this.translate('Tomorrow');
+            }
+
+            if (dateTime.unix() >= ranges['yesterday'][0] && dateTime.unix() < ranges['yesterday'][1]) {
+                return this.translate('Yesterday');
+            }
+
+            // Need to use UTC, otherwise there's a DST issue with old dates.
+            var dateTime = moment.utc(valueWithTime, internalDateTimeFormat);
+
+            if (dateTime.format('YYYY') == today.format('YYYY')) {
+                return dateTime.format(readableFormat);
+            }
+
+            return dateTime.format(readableFormat + ', YYYY');
         },
 
         getDateStringValue: function () {
@@ -161,7 +183,8 @@ define('views/fields/date', 'views/fields/base', function (Dep) {
                     weekStart: this.getDateTime().weekStart,
                     autoclose: true,
                     todayHighlight: true,
-                    keyboardNavigation: false,
+                    keyboardNavigation: true,
+                    todayBtn: this.getConfig().get('datepickerTodayButton') || false,
                 };
 
                 var language = this.getConfig().get('language');
@@ -180,18 +203,23 @@ define('views/fields/date', 'views/fields/base', function (Dep) {
 
                 options.language = language;
 
-                var $datePicker = this.$element.datepicker(options).on('show', function (e) {
-                    $('body > .datepicker.datepicker-dropdown').css('z-index', 1200);
-                }.bind(this));
+                var $datePicker = this.$element.datepicker(options);
 
                 if (this.mode == 'search') {
                     var $elAdd = this.$el.find('input.additional');
-                    $elAdd.datepicker(options).on('show', function (e) {
-                        $('body > .datepicker.datepicker-dropdown').css('z-index', 1200);
-                    }.bind(this));
+
+                    $elAdd.datepicker(options);
                     $elAdd.parent().find('button.date-picker-btn').on('click', function (e) {
                         $elAdd.datepicker('show');
                     });
+
+                    this.$el.find('select.search-type').on('change', function () {
+                        this.trigger('change');
+                    }.bind(this));
+
+                    $elAdd.on('change', function () {
+                        this.trigger('change');
+                    }.bind(this));
                 }
 
                 this.$element.parent().find('button.date-picker-btn').on('click', function (e) {

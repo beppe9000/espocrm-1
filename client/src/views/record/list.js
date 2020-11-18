@@ -65,6 +65,8 @@ define('views/record/list', 'view', function (Dep) {
 
         rowActionsColumnWidth: 25,
 
+        checkboxColumnWidth: 40,
+
         buttonList: [],
 
         headerDisabled: false,
@@ -74,6 +76,8 @@ define('views/record/list', 'view', function (Dep) {
         portalLayoutDisabled: false,
 
         dropdownItemList: [],
+
+        minColumnWidth: 100,
 
         events: {
             'click a.link': function (e) {
@@ -110,7 +114,7 @@ define('views/record/list', 'view', function (Dep) {
                 if ($(e.currentTarget).parent().hasClass('disabled')) {
                     return;
                 }
-                this.notify('Please wait...');
+                Espo.Ui.notify(this.translate('loading', 'messages'));
                 this.collection.once('sync', function () {
                     this.notify(false);
                 }.bind(this));
@@ -162,7 +166,7 @@ define('views/record/list', 'view', function (Dep) {
             }
             var order = asc ? 'asc' : 'desc';
 
-            this.notify('Please wait...');
+            Espo.Ui.notify(this.translate('loading', 'messages'));
             this.collection.once('sync', function () {
                 this.notify(false);
                 this.trigger('sort', {orderBy: orderBy, order: order});
@@ -172,7 +176,11 @@ define('views/record/list', 'view', function (Dep) {
             while (this.collection.length > maxSizeLimit) {
                 this.collection.pop();
             }
+
             this.collection.sort(orderBy, order);
+
+            this.collection.trigger('order-changed');
+
             this.deactivate();
         },
 
@@ -377,6 +385,7 @@ define('views/record/list', 'view', function (Dep) {
                 displayActionsButtonGroup: this.checkboxes || this.massActionList || this.buttonList.length || this.dropdownItemList.length,
                 totalCountFormatted: this.getNumberUtil().formatInt(this.collection.total),
                 moreCountFormatted: this.getNumberUtil().formatInt(moreCount),
+                checkboxColumnWidth: this.checkboxColumnWidth,
             };
         },
 
@@ -627,7 +636,7 @@ define('views/record/list', 'view', function (Dep) {
             var deletedCount = 0;
 
             this.confirm({
-                message: this.translate('removeSelectedRecordsConfirmation', 'messages'),
+                message: this.translate('removeSelectedRecordsConfirmation', 'messages', this.scope),
                 confirmText: this.translate('Remove')
             }, function () {
                 this.notify('Removing...');
@@ -697,7 +706,7 @@ define('views/record/list', 'view', function (Dep) {
                 this.listenToOnce(view, 'select', function (templateModel) {
                     this.clearView('pdfTemplate');
 
-                    Espo.Ui.notify(this.translate('pleaseWait', 'messages'));
+                    Espo.Ui.notify(this.translate('loading', 'messages'));
                     this.ajaxPostRequest('Pdf/action/massPrint', {
                         idList: idList,
                         entityType: this.entityType,
@@ -837,7 +846,7 @@ define('views/record/list', 'view', function (Dep) {
         },
 
         massActionExport: function () {
-            if (!this.getConfig().get('exportDisabled') || this.getUser().get('isAdmin')) {
+            if (!this.getConfig().get('exportDisabled') || this.getUser().isAdmin()) {
                 this.export();
             }
         },
@@ -989,7 +998,7 @@ define('views/record/list', 'view', function (Dep) {
             }, this);
 
             if (
-                this.getConfig().get('exportDisabled') && !this.getUser().get('isAdmin')
+                this.getConfig().get('exportDisabled') && !this.getUser().isAdmin()
                 ||
                 this.getAcl().get('exportPermission') === 'no'
                 ||
@@ -1565,32 +1574,50 @@ define('views/record/list', 'view', function (Dep) {
 
             var success = function () {
                 Espo.Ui.notify(false);
+
                 $showMore.addClass('hidden');
 
                 var rowCount = collection.length - initialCount;
                 var rowsReady = 0;
+
                 if (collection.length <= initialCount) {
                     final();
                 }
+
                 for (var i = initialCount; i < collection.length; i++) {
                     var model = collection.at(i);
+
                     this.buildRow(i, model, function (view) {
                         var model = view.model;
+
                         view.getHtml(function (html) {
                             var $row = $(this.getRowContainerHtml(model.id));
+
                             $row.append(html);
+
+                            var $existingRowItem = this.getDomRowItem(model.id);
+
+                            if ($existingRowItem && $existingRowItem.length) {
+                                $existingRowItem.remove();
+                            }
+
                             $list.append($row);
+
                             rowsReady++;
+
                             if (rowsReady == rowCount) {
                                 final();
                             }
+
                             view._afterRender();
+
                             if (view.options.el) {
                                 view.setElement(view.options.el);
                             }
                         }.bind(this));
                     });
                 }
+
                 this.noRebuild = true;
             }.bind(this);
 
@@ -1605,6 +1632,10 @@ define('views/record/list', 'view', function (Dep) {
                 remove: false,
                 more: true
             });
+        },
+
+        getDomRowItem: function (id) {
+            return null;
         },
 
         getRowContainerHtml: function (id) {
@@ -1756,7 +1787,7 @@ define('views/record/list', 'view', function (Dep) {
             }
 
             this.confirm({
-                message: this.translate('removeRecordConfirmation', 'messages'),
+                message: this.translate('removeRecordConfirmation', 'messages', this.scope),
                 confirmText: this.translate('Remove')
             }, function () {
                 this.collection.trigger('model-removing', id);
@@ -1802,6 +1833,41 @@ define('views/record/list', 'view', function (Dep) {
             if (this.collection.length == 0 && (this.collection.total == 0 || this.collection.total === -2)) {
                 this.reRender();
             }
+        },
+
+        getTableMinWidth: function () {
+            if (!this.listLayout) return;
+
+            var totalWidth = 0;
+            var totalWidthPx = 0;
+            var emptyCount = 0;
+            var columnCount = 0;
+
+            this.listLayout.forEach(function (item) {
+                columnCount ++;
+                if (item.widthPx) {totalWidthPx += item.widthPx; return;}
+                if (item.width) {totalWidth += item.width; return;}
+                emptyCount ++;
+            }, this);
+
+            if (this.rowActionsView && !this.rowActionsDisabled) {
+                totalWidthPx += this.rowActionsColumnWidth;
+            }
+
+            if (this.checkboxes) {
+                totalWidthPx += this.checkboxColumnWidth;
+            }
+
+            var minWidth;
+
+            if (totalWidth >= 100) {
+                minWidth = columnCount * this.minColumnWidth;
+            } else {
+                minWidth = (totalWidthPx + this.minColumnWidth * emptyCount) / (1 - totalWidth / 100);
+                minWidth = Math.round(minWidth);
+            }
+
+            return minWidth;
         },
     });
 });

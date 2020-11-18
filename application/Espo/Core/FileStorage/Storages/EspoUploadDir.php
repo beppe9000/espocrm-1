@@ -29,17 +29,23 @@
 
 namespace Espo\Core\FileStorage\Storages;
 
-use \Espo\Entities\Attachment;
+use Espo\Core\Utils\File\Manager as FileManager;
+use Espo\Entities\Attachment;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Error;
 
-class EspoUploadDir extends Base
+class EspoUploadDir implements Storage
 {
-    protected $dependencyList = ['fileManager'];
+    protected $fileManager;
+
+    public function __construct(FileManager $fileManager)
+    {
+        $this->fileManager = $fileManager;
+    }
 
     protected function getFileManager()
     {
-        return $this->getInjection('fileManager');
+        return $this->fileManager;
     }
 
     public function unlink(Attachment $attachment)
@@ -47,22 +53,32 @@ class EspoUploadDir extends Base
         return $this->getFileManager()->unlink($this->getFilePath($attachment));
     }
 
-    public function isFile(Attachment $attachment)
+    public function isFile(Attachment $attachment) : bool
     {
         return $this->getFileManager()->isFile($this->getFilePath($attachment));
     }
 
-    public function getContents(Attachment $attachment)
+    public function getContents(Attachment $attachment) : ?string
     {
-        return $this->getFileManager()->getContents($this->getFilePath($attachment));
+        $contents = $this->getFileManager()->getContents($this->getFilePath($attachment));
+
+        if ($contents === false) {
+            return null;
+        }
+
+        return $contents;
     }
 
-    public function putContents(Attachment $attachment, $contents)
+    public function putContents(Attachment $attachment, string $contents)
     {
-        return $this->getFileManager()->putContents($this->getFilePath($attachment), $contents);
+        $filePath = $this->getFilePath($attachment);
+        $result = $this->getFileManager()->putContents($filePath, $contents);
+        if (!$result) {
+            throw new Error("Could not store a file {$filePath}.");
+        }
     }
 
-    public function getLocalFilePath(Attachment $attachment)
+    public function getLocalFilePath(Attachment $attachment) : string
     {
         return $this->getFilePath($attachment);
     }
@@ -73,12 +89,12 @@ class EspoUploadDir extends Base
         return 'data/upload/' . $sourceId;
     }
 
-    public function getDownloadUrl(Attachment $attachment)
+    public function getDownloadUrl(Attachment $attachment) : string
     {
         throw new Error();
     }
 
-    public function hasDownloadUrl(Attachment $attachment)
+    public function hasDownloadUrl(Attachment $attachment) : bool
     {
         return false;
     }

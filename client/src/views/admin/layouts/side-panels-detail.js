@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows', function (Dep) {
+define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows', function (Dep) {
 
     return Dep.extend({
 
@@ -47,7 +47,7 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
             },
             name: {
                 readOnly: true
-            }
+            },
         },
 
         editable: true,
@@ -71,18 +71,20 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
         },
 
         loadLayout: function (callback) {
-            this.getHelper().layoutManager.get(this.scope, this.type, function (layout) {
+            this.getHelper().layoutManager.getOriginal(this.scope, this.type, this.setId, function (layout) {
                 this.readDataFromLayout(layout);
                 if (callback) {
                     callback();
                 }
-            }.bind(this), false);
+            }.bind(this));
         },
 
         readDataFromLayout: function (layout) {
             var panelListAll = [];
             var labels = {};
             var params = {};
+
+            layout = Espo.Utils.cloneDeep(layout);
 
             if (
                 this.getMetadata().get(['clientDefs', this.scope, 'defaultSidePanel', this.viewType]) !== false
@@ -107,12 +109,28 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
 
             this.rowLayout = [];
 
+
+            panelListAll.push('_delimiter_');
+
+            if (!layout['_delimiter_']) {
+                layout['_delimiter_'] = {
+                    disabled: true,
+                };
+            }
+
             panelListAll.forEach(function (item, index) {
                 var disabled = false;
                 var itemData = layout[item] || {};
                 if (itemData.disabled) {
                     disabled = true;
                 }
+
+                if (!layout[item]) {
+                    if ((params[item] || {}).disabled) {
+                        disabled = true;
+                    }
+                }
+
                 var labelText;
                 if (labels[item]) {
                     labelText = this.getLanguage().translate(labels[item], 'labels', this.scope);
@@ -121,15 +139,28 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
                 }
 
                 if (disabled) {
-                    this.disabledFields.push({
+                    var o = {
                         name: item,
-                        label: labelText
-                    });
+                        label: labelText,
+                    };
+                    if (o.name[0] === '_') {
+                        o.notEditable = true;
+                        if (o.name == '_delimiter_') {
+                            o.label = '. . .';
+                        }
+                    }
+                    this.disabledFields.push(o);
                 } else {
                     var o = {
                         name: item,
-                        label: labelText
+                        label: labelText,
                     };
+                    if (o.name[0] === '_') {
+                        o.notEditable = true;
+                        if (o.name == '_delimiter_') {
+                            o.label = '. . .';
+                        }
+                    }
                     if (o.name in params) {
                         this.dataAttributeList.forEach(function (attribute) {
                             if (attribute === 'name') return;
@@ -148,6 +179,7 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
                     this.itemsData[o.name] = Espo.Utils.cloneDeep(o);
                 }
             }, this);
+
             this.rowLayout.sort(function (v1, v2) {
                 return v1.index - v2.index;
             });
@@ -172,9 +204,8 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
 
                 this.dataAttributeList.forEach(function (attribute) {
                     if (attribute === 'name') return;
-                    var value = attributes[attribute] || null;
-                    if (value) {
-                        o[attribute] = value;
+                    if (attribute in attributes) {
+                        o[attribute] = attributes[attribute];
                     }
                 }, this);
 
@@ -188,5 +219,3 @@ Espo.define('views/admin/layouts/side-panels-detail', 'views/admin/layouts/rows'
 
     });
 });
-
-

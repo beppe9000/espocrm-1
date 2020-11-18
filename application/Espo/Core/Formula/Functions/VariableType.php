@@ -29,21 +29,29 @@
 
 namespace Espo\Core\Formula\Functions;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\Exceptions\Error;
 
-class VariableType extends Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+class VariableType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (!count($args)) {
+            throw Error("No variable name.");
         }
 
-        $name = $item->value;
+        $name = $args[0]->getData();
 
-        if (is_null($name)) {
-            throw new Error();
+        if (!is_string($name)) {
+            throw new Error("Bad variable name.");
+        }
+
+        if (is_null($name) && $name === '') {
+            throw new Error("Empty variable name.");
         }
 
         if (!property_exists($this->getVariables(), $name)) {

@@ -29,12 +29,23 @@
 
 namespace Espo\Repositories;
 
+use Espo\Core\Exceptions\Error;
+
 use Espo\ORM\Entity;
 
 use Espo\Core\Utils\Util;
 
-class Attachment extends \Espo\Core\ORM\Repositories\RDB
+use Espo\Core\Di;
+
+class Attachment extends \Espo\Core\Repositories\Database implements
+    Di\FileManagerAware,
+    Di\FileStorageManagerAware,
+    Di\ConfigAware
 {
+    use Di\FileManagerSetter;
+    use Di\FileStorageManagerSetter;
+    use Di\ConfigSetter;
+
     protected $imageTypeList = [
         'image/jpeg',
         'image/png',
@@ -53,35 +64,13 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
         'xx-large',
     ];
 
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('container');
-        $this->addDependency('config');
-    }
-
-    protected function getFileManager()
-    {
-        return $this->getInjection('container')->get('fileManager');
-    }
-
-    protected function getFileStorageManager()
-    {
-        return $this->getInjection('container')->get('fileStorageManager');
-    }
-
-    protected function getConfig()
-    {
-        return $this->getInjection('config');
-    }
-
-    public function beforeSave(Entity $entity, array $options = array())
+    public function beforeSave(Entity $entity, array $options = [])
     {
         parent::beforeSave($entity, $options);
 
         $storage = $entity->get('storage');
         if (!$storage) {
-            $entity->set('storage', $this->getConfig()->get('defaultFileStorage', null));
+            $entity->set('storage', $this->config->get('defaultFileStorage', null));
         }
 
         if ($entity->isNew()) {
@@ -91,18 +80,17 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
         }
     }
 
-    public function save(Entity $entity, array $options = array())
+    public function save(Entity $entity, array $options = [])
     {
         $isNew = $entity->isNew();
 
         if ($isNew) {
             $entity->id = Util::generateId();
 
-            if (!empty($entity->id) && $entity->has('contents')) {
+            if ($entity->has('contents')) {
                 $contents = $entity->get('contents');
-                $storeResult = $this->getFileStorageManager()->putContents($entity, $contents);
-                if ($storeResult === false) {
-                    throw new \Espo\Core\Exceptions\Error("Could not store the file");
+                if (is_string($contents)) {
+                    $this->fileStorageManager->putContents($entity, $contents);
                 }
             }
         }
@@ -112,7 +100,7 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
         return $result;
     }
 
-    protected function afterRemove(Entity $entity, array $options = array())
+    protected function afterRemove(Entity $entity, array $options = [])
     {
         parent::afterRemove($entity, $options);
 
@@ -128,7 +116,7 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
         ])->count();
 
         if ($duplicateCount === 0) {
-            $this->getFileStorageManager()->unlink($entity);
+            $this->fileStorageManager->unlink($entity);
 
             if (in_array($entity->get('type'), $this->imageTypeList)) {
                 $this->removeImageThumbs($entity);
@@ -140,8 +128,8 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
     {
         foreach ($this->imageThumbList as $suffix) {
             $filePath = "data/upload/thumbs/".$entity->getSourceId()."_{$suffix}";
-            if ($this->getFileManager()->isFile($filePath)) {
-                $this->getFileManager()->removeFile($filePath);
+            if ($this->fileManager->isFile($filePath)) {
+                $this->fileManager->removeFile($filePath);
             }
         }
     }
@@ -167,23 +155,23 @@ class Attachment extends \Espo\Core\ORM\Repositories\RDB
         return $attachment;
     }
 
-    public function getContents(Entity $entity)
+    public function getContents(Entity $entity) : ?string
     {
-        return $this->getFileStorageManager()->getContents($entity);
+        return $this->fileStorageManager->getContents($entity);
     }
 
-    public function getFilePath(Entity $entity)
+    public function getFilePath(Entity $entity) : string
     {
-        return $this->getFileStorageManager()->getLocalFilePath($entity);
+        return $this->fileStorageManager->getLocalFilePath($entity);
     }
 
-    public function hasDownloadUrl(Entity $entity)
+    public function hasDownloadUrl(Entity $entity) : bool
     {
-        return $this->getFileStorageManager()->hasDownloadUrl($entity);
+        return $this->fileStorageManager->hasDownloadUrl($entity);
     }
 
-    public function getDownloadUrl(Entity $entity)
+    public function getDownloadUrl(Entity $entity) : string
     {
-        return $this->getFileStorageManager()->getDownloadUrl($entity);
+        return $this->fileStorageManager->getDownloadUrl($entity);
     }
 }

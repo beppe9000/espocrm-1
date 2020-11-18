@@ -29,46 +29,41 @@
 
 namespace Espo\Core\Formula\Functions\NumberGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class FormatType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Di;
+
+class FormatType extends BaseFunction implements
+    Di\NumberAware
 {
-    protected function init()
+    use Di\NumberSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('number');
-    }
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            return true;
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 1) {
-             throw new Error();
+        if (count($args) < 1) {
+            $this->throwTooFewArguments();
         }
 
         $decimals = null;
-        if (count($item->value) > 1) {
-            $decimals = $this->evaluate($item->value[1]);
+        if (count($args) > 1) {
+            $decimals = $this->evaluate($args[1]);
         }
 
         $decimalMark = null;
-        if (count($item->value) > 2) {
-            $decimalMark = $this->evaluate($item->value[2]);
+        if (count($args) > 2) {
+            $decimalMark = $this->evaluate($args[2]);
         }
 
         $thousandSeparator = null;
-        if (count($item->value) > 3) {
-            $thousandSeparator = $this->evaluate($item->value[3]);
+        if (count($args) > 3) {
+            $thousandSeparator = $this->evaluate($args[3]);
         }
 
-        $value = $this->evaluate($item->value[0]);
+        $value = $this->evaluate($args[0]);
 
-        return $this->getInjection('number')->format($value, $decimals, $decimalMark, $thousandSeparator);
+        return $this->number->format($value, $decimals, $decimalMark, $thousandSeparator);
     }
 }

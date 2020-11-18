@@ -74,6 +74,8 @@ define('views/detail', 'views/main', function (Dep) {
             this.setupHeader();
             this.setupRecord();
 
+            this.setupPageTitle();
+
             if (this.getMetadata().get('scopes.' + this.scope + '.stream')) {
                 if (this.model.has('isFollowed')) {
                     this.handleFollowButton();
@@ -83,6 +85,17 @@ define('views/detail', 'views/main', function (Dep) {
                     this.handleFollowButton();
                 }, this);
             }
+        },
+
+        setupPageTitle: function () {
+            this.listenTo(this.model, 'after:save', function () {
+                this.updatePageTitle();
+            }, this);
+            this.listenTo(this.model, 'sync', function (model) {
+                if (model && model.hasChanged('name')) {
+                    this.updatePageTitle();
+                }
+            }, this);
         },
 
         setupHeader: function () {
@@ -98,7 +111,6 @@ define('views/detail', 'views/main', function (Dep) {
                     if (this.getView('header')) {
                         this.getView('header').reRender();
                     }
-                    this.updatePageTitle();
                 }
             }, this);
         },
@@ -185,7 +197,11 @@ define('views/detail', 'views/main', function (Dep) {
         },
 
         updatePageTitle: function () {
-            this.setPageTitle(this.model.get('name'));
+            if (this.model.has('name')) {
+                this.setPageTitle(this.model.get('name'));
+            } else {
+                Dep.prototype.updatePageTitle.call(this);
+            }
         },
 
         updateRelationshipPanel: function (name) {
@@ -239,6 +255,11 @@ define('views/detail', 'views/main', function (Dep) {
                 view.render();
                 view.notify(false);
                 this.listenToOnce(view, 'after:save', function () {
+                    if (data.fromSelectRelated) {
+                        setTimeout(function () {
+                            this.clearView('dialogSelectRelated');
+                        }.bind(this), 25);
+                    }
                     this.updateRelationshipPanel(link);
                     this.model.trigger('after:relate');
                 }, this);
@@ -256,17 +277,39 @@ define('views/detail', 'views/main', function (Dep) {
 
             var massRelateEnabled = data.massSelect;
 
-            var self = this;
             var attributes = {};
 
-            var filters = Espo.Utils.cloneDeep(this.selectRelatedFilters[link]) || {};
-            for (var filterName in filters) {
-                if (typeof filters[filterName] == 'function') {
-                    var filtersData = filters[filterName].call(this);
-                    if (filtersData) {
-                        filters[filterName] = filtersData;
-                    } else {
-                        delete filters[filterName];
+            if (link in this.selectRelatedFilters) {
+                var filters = Espo.Utils.cloneDeep(this.selectRelatedFilters[link]) || {};
+                for (var filterName in filters) {
+                    if (typeof filters[filterName] == 'function') {
+                        var filtersData = filters[filterName].call(this);
+                        if (filtersData) {
+                            filters[filterName] = filtersData;
+                        } else {
+                            delete filters[filterName];
+                        }
+                    }
+                }
+            } else {
+                var foreignLink = (this.model.defs['links'][link] || {}).foreign;
+                if (foreignLink && scope) {
+                    var foreignLinkType = this.getMetadata().get(['entityDefs', scope, 'links', foreignLink, 'type']);
+                    var foreignLinkFieldType = this.getMetadata().get(['entityDefs', scope, 'fields', foreignLink, 'type']);
+                    if (
+                        ~['belongsTo', 'belongsToParent'].indexOf(foreignLinkType) &&
+                        foreignLinkFieldType
+                    ) {
+                        var filters = {};
+                        if (foreignLinkFieldType === 'link' || foreignLinkFieldType === 'linkParent') {
+                            filters[foreignLink] = {
+                                type: 'isNull',
+                                attribute: foreignLink + 'Id',
+                                data: {
+                                    type: 'isEmpty',
+                                },
+                            };
+                        }
                     }
                 }
             }
@@ -291,18 +334,27 @@ define('views/detail', 'views/main', function (Dep) {
             var viewName = this.getMetadata().get('clientDefs.' + scope + '.modalViews.select') || 'views/modals/select-records';
 
             this.notify('Loading...');
-            this.createView('dialog', viewName, {
+            this.createView('dialogSelectRelated', viewName, {
                 scope: scope,
                 multiple: true,
-                createButton: false,
+                createButton: data.createButton || false,
+                triggerCreateEvent: true,
                 filters: filters,
                 massRelateEnabled: massRelateEnabled,
                 primaryFilterName: primaryFilterName,
-                boolFilterList: boolFilterList
+                boolFilterList: boolFilterList,
             }, function (dialog) {
                 dialog.render();
-                this.notify(false);
-                dialog.once('select', function (selectObj) {
+                Espo.Ui.notify(false);
+
+                this.listenTo(dialog, 'create', function () {
+                    this.actionCreateRelated({
+                        link: data.link,
+                        fromSelectRelated: true,
+                    });
+                }, this);
+
+                this.listenToOnce(dialog, 'select', function (selectObj) {
                     var data = {};
                     if (Object.prototype.toString.call(selectObj) === '[object Array]') {
                         var ids = [];
@@ -318,21 +370,21 @@ define('views/detail', 'views/main', function (Dep) {
                             data.id = selectObj.id;
                         }
                     }
-                    $.ajax({
-                        url: self.scope + '/' + self.model.id + '/' + link,
-                        type: 'POST',
-                        data: JSON.stringify(data),
-                        success: function () {
+                    Espo.Ajax.postRequest(this.scope + '/' + this.model.id + '/' + link, data)
+                    .then(
+                        function () {
                             this.notify('Linked', 'success');
                             this.updateRelationshipPanel(link);
                             this.model.trigger('after:relate');
-                        }.bind(this),
-                        error: function () {
+                        }.bind(this)
+                    )
+                    .fail(
+                        function () {
                             this.notify('Error occurred', 'error');
                         }.bind(this)
-                    });
-                }.bind(this));
-            }.bind(this));
+                    );
+                }, this);
+            });
         },
 
         actionDuplicate: function () {

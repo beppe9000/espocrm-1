@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/fields/base', 'view', function (Dep) {
+define('views/fields/base', 'view', function (Dep) {
 
     return Dep.extend({
 
@@ -224,6 +224,8 @@ Espo.define('views/fields/base', 'view', function (Dep) {
 
 
         setMode: function (mode) {
+            var modeIsChanged = this.mode !== mode;
+
             this.mode = mode;
             var property = mode + 'Template';
             if (!(property in this)) {
@@ -241,6 +243,10 @@ Espo.define('views/fields/base', 'view', function (Dep) {
                     this.compiledTemplatesCache[contentProperty] =
                         this.compiledTemplatesCache[contentProperty] || this._templator.compileTemplate(this[contentProperty]);
                 }
+            }
+
+            if (modeIsChanged) {
+                this.trigger('mode-changed');
             }
         },
 
@@ -301,6 +307,21 @@ Espo.define('views/fields/base', 'view', function (Dep) {
                 this.setupSearch();
             }
 
+            this.on('highlight', function () {
+                var $cell = this.getCellElement();
+                $cell.addClass('highlighted');
+                $cell.addClass('transition');
+
+                setTimeout(function () {
+                    $cell.removeClass('highlighted');
+                }, this.highlightPeriod || 3000);
+
+                setTimeout(function () {
+                    $cell.removeClass('transition');
+                }, (this.highlightPeriod || 3000) + 2000);
+
+            }, this);
+
             this.on('invalid', function () {
                 var $cell = this.getCellElement();
                 $cell.addClass('has-error');
@@ -338,23 +359,26 @@ Espo.define('views/fields/base', 'view', function (Dep) {
             }
 
             if (this.mode != 'search') {
-                this.attributeList = this.getAttributeList();
+                this.attributeList = this.getAttributeList(); // for backward compatibility, to be removed
 
                 this.listenTo(this.model, 'change', function (model, options) {
                     if (this.isRendered() || this.isBeingRendered()) {
                         if (options.ui) {
                             return;
                         }
-
                         var changed = false;
-                        this.attributeList.forEach(function (attribute) {
+                        this.getAttributeList().forEach(function (attribute) {
                             if (model.hasChanged(attribute)) {
                                 changed = true;
                             }
-                        });
+                        }, this);
 
                         if (changed && !options.skipReRender) {
                             this.reRender();
+                        }
+
+                        if (changed && options.highlight) {
+                            this.trigger('highlight');
                         }
                     }
                 }.bind(this));
@@ -381,7 +405,13 @@ Espo.define('views/fields/base', 'view', function (Dep) {
                 }
 
                 tooltipText = tooltipText || this.translate(this.name, 'tooltips', this.model.name) || '';
-                tooltipText = this.getHelper().transfromMarkdownText(tooltipText).toString();
+                tooltipText = this.getHelper().transfromMarkdownText(tooltipText, {linksInNewTab: true}).toString();
+
+                var hidePopover = function () {
+                    $('body').off('click.popover-' + this.id);
+                    this.stopListening(this, 'mode-changed', hidePopover);
+                    $a.popover('hide');
+                }.bind(this);
 
                 $a.popover({
                     placement: 'bottom',
@@ -390,12 +420,15 @@ Espo.define('views/fields/base', 'view', function (Dep) {
                     content: tooltipText,
                 }).on('shown.bs.popover', function () {
                     $('body').off('click.popover-' + this.id);
+                    this.stopListening(this, 'mode-changed', hidePopover);
+
                     $('body').on('click.popover-' + this.id , function (e) {
                         if ($(e.target).closest('.popover-content').get(0)) return;
                         if ($.contains($a.get(0), e.target)) return;
-                        $('body').off('click.popover-' + this.id);
-                        $a.popover('hide');
+                        hidePopover();
                     }.bind(this));
+
+                    this.listenToOnce(this, 'mode-changed', hidePopover);
                 }.bind(this));
 
                 $a.on('click', function () {
@@ -595,6 +628,8 @@ Espo.define('views/fields/base', 'view', function (Dep) {
             }
 
             this.reRender(true);
+
+            this.trigger('after:inline-edit-off');
         },
 
         inlineEdit: function () {

@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/fields/currency', 'views/fields/float', function (Dep) {
+define('views/fields/currency', 'views/fields/float', function (Dep) {
 
     return Dep.extend({
 
@@ -40,11 +40,15 @@ Espo.define('views/fields/currency', 'views/fields/float', function (Dep) {
 
         detailTemplate2: 'fields/currency/detail-2',
 
+        detailTemplate3: 'fields/currency/detail-3',
+
         listTemplate: 'fields/currency/list',
 
         listTemplate1: 'fields/currency/list-1',
 
         listTemplate2: 'fields/currency/list-2',
+
+        listTemplate3: 'fields/currency/list-3',
 
         detailTemplateNoCurrency: 'fields/currency/detail-no-currency',
 
@@ -66,6 +70,11 @@ Espo.define('views/fields/currency', 'views/fields/float', function (Dep) {
             this.currencyFieldName = this.name + 'Currency';
             this.defaultCurrency = this.getConfig().get('defaultCurrency');
             this.currencyList = this.getConfig().get('currencyList') || [this.defaultCurrency];
+
+            if (this.params.onlyDefaultCurrency) {
+                this.currencyList = [this.defaultCurrency];
+            }
+
             this.isSingleCurrency = this.currencyList.length <= 1;
 
             var currencyValue = this.currencyValue = this.model.get(this.currencyFieldName) || this.defaultCurrency;

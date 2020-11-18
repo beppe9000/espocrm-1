@@ -51,6 +51,7 @@
         "ArrayValue": "Array Value",
         "DashboardTemplate": "Dashboard Template",
         "Currency": "Currency",
+        "LayoutSet": "Layout Set",
         "Webhook": "Webhook"
     },
     "scopeNamesPlural": {
@@ -94,6 +95,7 @@
         "ArrayValue": "Array Values",
         "DashboardTemplate": "Dashboard Templates",
         "Currency": "Currency",
+        "LayoutSet": "Layout Sets",
         "Webhook": "Webhooks"
     },
     "labels": {
@@ -102,12 +104,14 @@
         "None": "None",
         "Home": "Home",
         "by": "by",
+        "Proceed": "Proceed",
         "Saved": "Saved",
         "Error": "Error",
         "Select": "Select",
         "Not valid": "Not valid",
         "Please wait...": "Please wait...",
         "Please wait": "Please wait",
+        "Attached": "Attached",
         "Loading...": "Loading...",
         "Uploading...": "Uploading...",
         "Sending...": "Sending...",
@@ -254,6 +258,7 @@
         "View Followers": "View Followers",
         "Convert Currency": "Convert Currency",
         "View on Map": "View on Map",
+        "Preview": "Preview",
         "Move Over": "Move Over"
     },
     "messages": {

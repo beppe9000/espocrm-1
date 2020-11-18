@@ -29,57 +29,95 @@
 
 namespace Espo\Core\Formula\Functions\RecordGroup;
 
-use Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class FindRelatedOneType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Di;
+
+class FindRelatedOneType extends BaseFunction implements
+    Di\EntityManagerAware,
+    Di\SelectManagerFactoryAware,
+    Di\MetadataAware
 {
-    protected function init()
+    use Di\EntityManagerSetter;
+    use Di\SelectManagerFactorySetter;
+    use Di\MetadataSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('entityManager');
-        $this->addDependency('selectManagerFactory');
-    }
-
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        if (count($args) < 3) {
+            $this->throwTooFewArguments(3);
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
+        $entityManager = $this->entityManager;
+
+        $entityType = $this->evaluate($args[0]);
+        $id = $this->evaluate($args[1]);
+        $link = $this->evaluate($args[2]);
+
+        $orderBy = null;
+        $order = null;
+
+        if (count($args) > 3) {
+            $orderBy = $this->evaluate($args[3]);
+        }
+        if (count($args) > 4) {
+            $order = $this->evaluate($args[4]) ?? null;
         }
 
-        if (count($item->value) < 5) {
-            throw new Error();
+        if (!$entityType) {
+            $this->throwBadArgumentType(1, 'string');
         }
 
-        $entityManager = $this->getInjection('entityManager');
+        if (!$id) {
+            return null;
+        }
 
-        $entityType = $this->evaluate($item->value[0]);
-        $id = $this->evaluate($item->value[1]);
-        $link = $this->evaluate($item->value[2]);
-        $orderBy = $this->evaluate($item->value[3]);
-        $order = $this->evaluate($item->value[4]) ?? 'asc';
-
-        if (!$entityType) throw new Error("Formula record\\findRelatedOne: Empty entityType.");
-        if (!$id) return null;
-        if (!$link) throw new Error("Formula record\\findRelatedOne: Empty link.");
+        if (!$link) {
+            $this->throwBadArgumentType(3, 'string');
+        }
 
         $entity = $entityManager->getEntity($entityType, $id);
 
         if (!$entity) return null;
 
+        $metadata = $this->metadata;
+
         $relationType = $entity->getRelationParam($link, 'type');
 
+        if (in_array($relationType, ['belongsTo', 'hasOne', 'belongsToParent'])) {
+            $relatedEntity = $entityManager->getRepository($entityType)->findRelated($entity, $link, [
+                'select' => ['id'],
+            ]);
+            if (!$relatedEntity) {
+                return null;
+            }
+            return $relatedEntity->id;
+        }
+
+        if (!$orderBy) {
+            $orderBy = $metadata->get(['entityDefs', $entityType, 'collection', 'orderBy']);
+            if (is_null($order)) {
+                $order = $metadata->get(['entityDefs', $entityType, 'collection', 'order']) ?? 'asc';
+            }
+        } else {
+            $order = $order ?? 'asc';
+        }
+
         $foreignEntityType = $entity->getRelationParam($link, 'entity');
-        if (!$foreignEntityType) throw new Error("Formula record\\findRelatedOne: Bad or not supported link '{$link}'.");
+        if (!$foreignEntityType) {
+            $this->throwError("Bad or not supported link '{$link}'.");
+        }
 
         $foreignLink = $entity->getRelationParam($link, 'foreign');
-        if (!$foreignLink) throw new Error("Formula record\\findRelatedOne: Not supported link '{$link}'.");
+        if (!$foreignLink) {
+            $this->throwError("Not supported link '{$link}'.");
+        }
 
-        $selectManager = $this->getInjection('selectManagerFactory')->create($foreignEntityType);
+        $selectManager = $this->selectManagerFactory->create($foreignEntityType);
         $selectParams = $selectManager->getEmptySelectParams();
-
 
         if ($relationType === 'hasChildren') {
             $selectParams['whereClause'][] = [$foreignLink . 'Id' => $entity->id];
@@ -89,20 +127,22 @@ class FindRelatedOneType extends \Espo\Core\Formula\Functions\Base
             $selectParams['whereClause'][] = [$foreignLink . '.id' => $entity->id];
         }
 
-        if (count($item->value) <= 6) {
+        if (count($args) <= 6) {
             $filter = null;
-            if (count($item->value) == 6) {
-                $filter = $this->evaluate($item->value[3]);
+            if (count($args) == 6) {
+                $filter = $this->evaluate($args[5]);
             }
             if ($filter) {
-                if (!is_string($filter)) throw new Error("Formula record\\findRelatedOne: Bad filter.");
+                if (!is_string($filter)) {
+                    $this->throwError("Bad filter.");
+                }
                 $selectManager->applyFilter($filter, $selectParams);
             }
         } else {
             $i = 5;
-            while ($i < count($item->value) - 1) {
-                $key = $this->evaluate($item->value[$i]);
-                $value = $this->evaluate($item->value[$i + 1]);
+            while ($i < count($args) - 1) {
+                $key = $this->evaluate($args[$i]);
+                $value = $this->evaluate($args[$i + 1]);
                 $selectParams['whereClause'][] = [$key => $value];
                 $i = $i + 2;
             }

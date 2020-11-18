@@ -92,7 +92,7 @@ define('collection', [], function () {
                 this.sortBy = orderBy;
             }
 
-            this.fetch();
+            return this.fetch();
         },
 
         nextPage: function () {
@@ -147,13 +147,17 @@ define('collection', [], function () {
 
             this.where = options.where || this.where;
 
+            var length = this.length + this.lengthCorrection;
+
             if (!('maxSize' in options)) {
-                options.data.maxSize = options.more ? this.maxSize : ((this.length > this.maxSize) ? this.length : this.maxSize);
+                options.data.maxSize = options.more ? this.maxSize : (
+                    (length > this.maxSize) ? length : this.maxSize
+                );
             } else {
                 options.data.maxSize = options.maxSize;
             }
 
-            options.data.offset = options.more ? this.length + this.lengthCorrection : this.offset;
+            options.data.offset = options.more ? length : this.offset;
             options.data.orderBy = this.orderBy;
             options.data.order = this.order;
             options.data.where = this.getWhere();
@@ -191,7 +195,22 @@ define('collection', [], function () {
 
         getEntityType: function () {
             return this.name;
-        }
+        },
+
+        resetOrderToDefault: function () {
+            this.orderBy = this.defaultOrderBy;
+            this.order = this.defaultOrder;
+        },
+
+        setOrder: function (orderBy, order, setDefault) {
+            this.orderBy = orderBy;
+            this.order = order;
+
+            if (setDefault) {
+                this.defaultOrderBy = orderBy;
+                this.defaultOrder = order;
+            }
+        },
 
     });
 

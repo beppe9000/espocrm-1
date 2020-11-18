@@ -29,27 +29,19 @@
 
 namespace Espo\Core\Formula\Functions\LogicalGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class OrType extends \Espo\Core\Formula\Functions\Base
+class OrType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            return true;
-        }
-
-        if (is_null($item->value)) {
-            return true;
-        }
-
-        if (!is_array($item->value)) {
-            throw new Error('Value for \'Or\' item is not array.');
-        }
-
         $result = false;
-        foreach ($item->value as $subItem) {
-            $result = $result || $this->evaluate($subItem);
+
+        foreach ($args as $item) {
+            $result = $result || $this->evaluate($item);
             if ($result) break;
         }
 

@@ -29,18 +29,24 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-class Portal extends Record
+use Espo\Core\Di;
+
+class Portal extends Record implements
+
+    Di\FileManagerAware,
+    Di\DataManagerAware
 {
+    use Di\FileManagerSetter;
+    use Di\DataManagerSetter;
+
     protected $getEntityBeforeUpdate = true;
 
-    protected function init()
-    {
-        parent::init();
-        $this->addDependency('fileManager');
-        $this->addDependency('dataManager');
-    }
+    protected $mandatorySelectAttributeList = [
+        'customUrl',
+        'customId',
+    ];
 
     public function loadAdditionalFields(Entity $entity)
     {
@@ -70,7 +76,7 @@ class Portal extends Record
 
     protected function clearRolesCache()
     {
-        $this->getInjection('fileManager')->removeInDir('data/cache/application/acl-portal');
-        $this->getInjection('dataManager')->updateCacheTimestamp();
+        $this->fileManager->removeInDir('data/cache/application/aclPortal');
+        $this->dataManager->updateCacheTimestamp();
     }
 }

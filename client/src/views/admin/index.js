@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/admin/index', 'view', function (Dep) {
+define('views/admin/index', 'view', function (Dep) {
 
     return Dep.extend({
 
@@ -35,6 +35,9 @@ Espo.define('views/admin/index', 'view', function (Dep) {
         events: {
             'click [data-action]': function (e) {
                 Espo.Utils.handleAction(this, e);
+            },
+            'keyup input[data-name="quick-search"]': function (e) {
+                this.processQuickSearch(e.currentTarget.value);
             },
         },
 
@@ -46,19 +49,45 @@ Espo.define('views/admin/index', 'view', function (Dep) {
             };
         },
 
+        afterRender: function () {
+            if (this.quickSearchText) {
+                this.$el.find('input[data-name="quick-search"]').val(this.quickSearchText);
+                this.processQuickSearch(this.quickSearchText);
+            }
+        },
+
         setup: function () {
             this.panelDataList = [];
 
             var panels = this.getMetadata().get('app.adminPanel') || {};
             for (var name in panels) {
                 var panelItem = Espo.Utils.cloneDeep(panels[name]);
+
                 panelItem.name = name;
                 panelItem.itemList = panelItem.itemList || [];
-                if (panelItem.items) {
-                    panelItem.items.forEach(function (item) {
-                        panelItem.itemList.push(item);
+                panelItem.label = this.translate(panelItem.label, 'labels', 'Admin');
+
+                if (panelItem.itemList) {
+                    panelItem.itemList.forEach(function (item) {
+                        item.label = this.translate(item.label, 'labels', 'Admin');
+
+                        if (item.description) {
+                            item.keywords = (this.getLanguage().get('Admin', 'keywords', item.description) || '').split(',');
+                        } else {
+                            item.keywords = [];
+                        }
                     }, this);
                 }
+
+                // Legacy support.
+                if (panelItem.items) {
+                    panelItem.items.forEach(function (item) {
+                        item.label = this.translate(item.label, 'labels', 'Admin');
+                        panelItem.itemList.push(item);
+                        item.keywords = [];
+                    }, this);
+                }
+
                 this.panelDataList.push(panelItem);
             }
 
@@ -83,6 +112,98 @@ Espo.define('views/admin/index', 'view', function (Dep) {
                 this.createView('notificationsPanel', 'views/admin/panels/notifications', {
                     el: this.getSelector() + ' .notifications-panel-container'
                 });
+            }
+        },
+
+        processQuickSearch: function (text) {
+            text = text.trim();
+
+            this.quickSearchText = text;
+
+            var $noData = this.$noData || this.$el.find('.no-data');
+
+            $noData.addClass('hidden');
+
+            if (!text) {
+                this.$el.find('.admin-content-section').removeClass('hidden');
+                this.$el.find('.admin-content-row').removeClass('hidden');
+                return;
+            }
+
+            text = text.toLowerCase();
+
+            this.$el.find('.admin-content-section').addClass('hidden');
+            this.$el.find('.admin-content-row').addClass('hidden');
+
+            var panelsToShow = [];
+            var rowsToShow = [];
+
+            anythingMatched = false;
+
+            this.panelDataList.forEach(function (panel, panelIndex) {
+                var panelMatched = false;
+
+                var panelLabelMatched = false;
+
+                if (panel.label && panel.label.toLowerCase().indexOf(text) === 0) {
+                    panelMatched = true;
+                    panelLabelMatched = true;
+                }
+
+                panel.itemList.forEach(function (row, rowIndex) {
+                    if (!row.label) return;
+
+                    var matched = false;
+
+                    if (panelLabelMatched) {
+                        matched = true;
+                    }
+
+                    if (!matched) {
+                        matched = row.label.toLowerCase().indexOf(text) === 0;
+                    }
+
+                    if (!matched) {
+                        var wordList = row.label.split(' ');
+                        wordList.forEach(function (word) {
+                            if (word.toLowerCase().indexOf(text) === 0) {
+                                matched = true;
+                            }
+                        }, this);
+
+                        if (!matched) {
+                            matched = ~row.keywords.indexOf(text);
+                        }
+                        if (!matched) {
+                            if (text.length > 3) {
+                                row.keywords.forEach(function (word) {
+                                    if (word.indexOf(text) === 0) {
+                                        matched = true;
+                                    }
+                                }, this);
+                            }
+
+                        }
+                    }
+
+                    if (matched) {
+                        panelMatched = true;
+                        this.$el.find(
+                            '.admin-content-section[data-index="'+panelIndex.toString()+'"] '+
+                            '.admin-content-row[data-index="'+rowIndex.toString()+'"]'
+                        ).removeClass('hidden');
+                        anythingMatched = true;
+                    }
+                }, this);
+
+                if (panelMatched) {
+                    this.$el.find('.admin-content-section[data-index="'+panelIndex.toString()+'"]').removeClass('hidden');
+                    anythingMatched = true;
+                }
+            }, this);
+
+            if (!anythingMatched) {
+                $noData.removeClass('hidden');
             }
         },
 

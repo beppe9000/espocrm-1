@@ -1,5 +1,4 @@
 {
-
     "settings": {
         "isAvailable": true,
         "layout": {
@@ -259,6 +258,5 @@
                 }
             }
         }
-    },
-    "dependencyList": ["container"]
+    }
 }

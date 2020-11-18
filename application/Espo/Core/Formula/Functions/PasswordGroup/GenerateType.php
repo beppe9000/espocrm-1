@@ -29,25 +29,29 @@
 
 namespace Espo\Core\Formula\Functions\PasswordGroup;
 
-use \Espo\ORM\Entity;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class GenerateType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Utils\Util;
+
+use Espo\Core\Di;
+
+class GenerateType extends BaseFunction implements
+    Di\ConfigAware
 {
-    protected function init()
-    {
-        $this->addDependency('config');
-    }
+    use Di\ConfigSetter;
 
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        $config = $this->getInjection('config');
+        $config = $this->config;
 
         $length = $config->get('passwordGenerateLength', 10);
         $letterCount = $config->get('passwordGenerateLetterCount', 4);
         $numberCount = $config->get('passwordGenerateNumberCount', 2);
 
-        $password = \Espo\Core\Utils\Util::generatePassword($length, $letterCount, $numberCount, true);
+        $password = Util::generatePassword($length, $letterCount, $numberCount, true);
 
         return $password;
     }

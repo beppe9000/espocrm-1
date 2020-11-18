@@ -29,30 +29,63 @@
 
 namespace Espo\Modules\Crm\EntryPoints;
 
-use \Espo\Core\Utils\Util;
+use Espo\Core\Utils\Util;
 
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
 
-class SubscribeAgain extends \Espo\Core\EntryPoints\Base
+use Espo\Core\EntryPoints\{
+    EntryPoint,
+    NoAuth,
+};
+
+use Espo\Core\{
+    ORM\EntityManager,
+    Utils\ClientManager,
+    HookManager,
+    Utils\Config,
+    Utils\Metadata,
+    Utils\Hasher,
+};
+
+class SubscribeAgain implements EntryPoint
 {
-    public static $authRequired = false;
+    use NoAuth;
 
-    protected function getHookManager()
-    {
-        return $this->getContainer()->get('hookManager');
+    protected $entityManager;
+    protected $clientManager;
+    protected $hookManager;
+    protected $config;
+    protected $metadata;
+    protected $hasher;
+
+    public function __construct(
+        EntityManager $entityManager,
+        ClientManager $clientManager,
+        HookManager $hookManager,
+        Config $config,
+        Metadata $metadata,
+        Hasher $hasher
+    ) {
+        $this->entityManager = $entityManager;
+        $this->clientManager = $clientManager;
+        $this->hookManager = $hookManager;
+        $this->config = $config;
+        $this->metadata = $metadata;
+        $this->hasher = $hasher;
     }
 
-    public function run()
+    public function run($request)
     {
-        $id = $_GET['id'] ?? null;
-        $emailAddress = $_GET['emailAddress'] ?? null;
-        $hash = $_GET['hash'] ?? null;
+        $id = $request->get('id') ?? null;
+        $emailAddress = $request->get('emailAddress') ?? null;
+        $hash = $request->get('hash') ?? null;
 
         if ($emailAddress && $hash) {
             $this->processWithHash($emailAddress, $hash);
+
             return;
         }
 
@@ -61,7 +94,7 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
         }
         $queueItemId = $id;
 
-        $queueItem = $this->getEntityManager()->getEntity('EmailQueueItem', $queueItemId);
+        $queueItem = $this->entityManager->getEntity('EmailQueueItem', $queueItemId);
 
         if (!$queueItem) {
             throw new NotFound();
@@ -72,18 +105,18 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
 
         $massEmailId = $queueItem->get('massEmailId');
         if ($massEmailId) {
-            $massEmail = $this->getEntityManager()->getEntity('MassEmail', $massEmailId);
+            $massEmail = $this->entityManager->getEntity('MassEmail', $massEmailId);
             if ($massEmail) {
                 $campaignId = $massEmail->get('campaignId');
                 if ($campaignId) {
-                    $campaign = $this->getEntityManager()->getEntity('Campaign', $campaignId);
+                    $campaign = $this->entityManager->getEntity('Campaign', $campaignId);
                 }
 
                 $targetType = $queueItem->get('targetType');
                 $targetId = $queueItem->get('targetId');
 
                 if ($targetType && $targetId) {
-                    $target = $this->getEntityManager()->getEntity($targetType, $targetId);
+                    $target = $this->entityManager->getEntity($targetType, $targetId);
 
                     if (!$target) {
                         throw new NotFound();
@@ -92,42 +125,51 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
                     if ($massEmail->get('optOutEntirely')) {
                         $emailAddress = $target->get('emailAddress');
                         if ($emailAddress) {
-                            $ea = $this->getEntityManager()->getRepository('EmailAddress')->getByAddress($emailAddress);
+                            $ea = $this->entityManager->getRepository('EmailAddress')->getByAddress($emailAddress);
+
                             if ($ea) {
                                 $ea->set('optOut', false);
-                                $this->getEntityManager()->saveEntity($ea);
+                                $this->entityManager->saveEntity($ea);
                             }
                         }
                     }
 
                     $link = null;
+
                     $m = [
                         'Account' => 'accounts',
                         'Contact' => 'contacts',
                         'Lead' => 'leads',
                         'User' => 'users',
                     ];
+
                     if (!empty($m[$target->getEntityType()])) {
                         $link = $m[$target->getEntityType()];
                     }
+
                     if ($link) {
-                        $targetListList = $massEmail->get('targetLists');
+                        $targetListList = $this->entityManager
+                            ->getRepository('MassEmail')
+                            ->getRelation($massEmail, 'targetLists')
+                            ->find();
 
                         foreach ($targetListList as $targetList) {
-                            $optedInResult = $this->getEntityManager()->getRepository('TargetList')->updateRelation($targetList, $link, $target->id, array(
-                                'optedOut' => false
-                            ));
+                            $optedInResult = $this->entityManager
+                                ->getRepository('TargetList')
+                                ->updateRelation($targetList, $link, $target->id, ['optedOut' => false]);
+
                             if ($optedInResult) {
                                 $hookData = [
                                    'link' => $link,
                                    'targetId' => $targetId,
-                                   'targetType' => $targetType
+                                   'targetType' => $targetType,
                                 ];
-                                $this->getHookManager()->process('TargetList', 'afterCancelOptOut', $targetList, [], $hookData);
+
+                                $this->hookManager->process('TargetList', 'afterCancelOptOut', $targetList, [], $hookData);
                             }
                         }
 
-                        $this->getHookManager()->process($target->getEntityType(), 'afterCancelOptOut', $target, [], []);
+                        $this->hookManager->process($target->getEntityType(), 'afterCancelOptOut', $target, [], []);
 
                         $this->display(['queueItemId' => $queueItemId]);
                     }
@@ -136,13 +178,16 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
         }
 
         if ($campaign && $target) {
-            $logRecord = $this->getEntityManager()->getRepository('CampaignLogRecord')->where(array(
-                'queueItemId' => $queueItemId,
-                'action' => 'Opted Out'
-            ))->order('createdAt', true)->findOne();
+            $logRecord = $this->entityManager
+                ->getRepository('CampaignLogRecord')->where([
+                    'queueItemId' => $queueItemId,
+                    'action' => 'Opted Out',
+                ])
+                ->order('createdAt', true)
+                ->findOne();
 
             if ($logRecord) {
-                $this->getEntityManager()->removeEntity($logRecord);
+                $this->entityManager->removeEntity($logRecord);
             }
         }
 
@@ -152,8 +197,8 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
     {
         $data = [
             'actionData' => $actionData,
-            'view' => $this->getMetadata()->get(['clientDefs', 'Campaign', 'subscribeView']),
-            'template' => $this->getMetadata()->get(['clientDefs', 'Campaign', 'subscribeTemplate']),
+            'view' => $this->metadata->get(['clientDefs', 'Campaign', 'subscribeView']),
+            'template' => $this->metadata->get(['clientDefs', 'Campaign', 'subscribeTemplate']),
         ];
 
         $runScript = "
@@ -163,20 +208,21 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
                 controller.doAction('subscribeAgain', ".json_encode($data).");
             });
         ";
-        $this->getClientManager()->display($runScript);
+
+        $this->clientManager->display($runScript);
     }
 
     protected function processWithHash(string $emailAddress, string $hash)
     {
-        $secretKey = $this->getConfig()->get('hashSecretKey');
+        $secretKey = $this->config->get('hashSecretKey');
 
-        $hash2 = $this->getContainer()->get('hasher')->hash($emailAddress);
+        $hash2 = $this->hasher->hash($emailAddress);
 
         if ($hash2 !== $hash) {
             throw new NotFound();
         }
 
-        $repository = $this->getEntityManager()->getRepository('EmailAddress');
+        $repository = $this->entityManager->getRepository('EmailAddress');
 
         $ea = $repository->getByAddress($emailAddress);
         if ($ea) {
@@ -184,10 +230,11 @@ class SubscribeAgain extends \Espo\Core\EntryPoints\Base
 
             if ($ea->get('optOut')) {
                 $ea->set('optOut', false);
-                $this->getEntityManager()->saveEntity($ea);
+
+                $this->entityManager->saveEntity($ea);
 
                 foreach ($entityList as $entity) {
-                    $this->getHookManager()->process($entity->getEntityType(), 'afterCancelOptOut', $entity, [], []);
+                    $this->hookManager->process($entity->getEntityType(), 'afterCancelOptOut', $entity, [], []);
                 }
             }
 

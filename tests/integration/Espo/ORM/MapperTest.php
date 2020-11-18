@@ -80,7 +80,48 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $this->assertFalse($isRelated);
     }
 
-    public function testRelate3()
+    public function testRelate3WithEntityRefetching()
+    {
+        $app = $this->createApplication();
+
+        $entityManager = $app->getContainer()->get('entityManager');
+
+        $account = $entityManager->getEntity('Account');
+        $account->set('name', 'Test');
+        $entityManager->saveEntity($account);
+
+        $contact = $entityManager->getEntity('Contact');
+        $contact->set('lastName', 'Test');;
+        $entityManager->saveEntity($contact);
+
+        $entityManager->getRepository('Contact')
+            ->getRelation($contact, 'account')
+            ->relate($account);
+
+        $contact = $entityManager->getEntity('Contact', $contact->get('id'));
+
+        $isRelated = $entityManager->getRepository('Contact')
+            ->getRelation($contact, 'account')
+            ->isRelated($account);
+
+        $this->assertTrue($isRelated);
+
+        $contact = $entityManager->getEntity('Contact', $contact->id);
+
+        $entityManager->getRepository('Contact')
+            ->getRelation($contact, 'account')
+            ->unrelate($account);
+
+        $contact = $entityManager->getEntity('Contact', $contact->get('id'));
+
+        $isRelated = $entityManager->getRepository('Contact')
+            ->getRelation($contact, 'account')
+            ->isRelated($account);
+
+        $this->assertFalse($isRelated);
+    }
+
+    public function testRelate4()
     {
         $app = $this->createApplication();
 
@@ -129,19 +170,19 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertTrue($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a2);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a2, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a2, 'originalLead', $l1);
         $this->assertFalse($isRelated);
 
 
         $em->getRepository('Lead')->relate($l1, 'createdAccount', $a2);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a2, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a2, 'originalLead', $l1);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a2);
@@ -150,7 +191,7 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertFalse($isRelated);
 
         $c = $em->getRepository('Lead')->where(['createdAccountId' => $a1->id])->count();
@@ -179,24 +220,23 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
             'lastName' => '2',
         ]);
 
-        $em->getRepository('Lead')->relate($a1, 'originalLead', $l1);
+        $em->getRepository('Account')->relate($a1, 'originalLead', $l1);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertTrue($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a2);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a2, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a2, 'originalLead', $l1);
         $this->assertFalse($isRelated);
 
+        $em->getRepository('Account')->relate($a2, 'originalLead', $l1);
 
-        $em->getRepository('Lead')->relate($a2, 'originalLead', $l1);
-
-        $isRelated = $em->getRepository('Lead')->isRelated($a2, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a2, 'originalLead', $l1);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a2);
@@ -205,7 +245,7 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertFalse($isRelated);
 
         $c = $em->getRepository('Lead')->where(['createdAccountId' => $a1->id])->count();
@@ -239,19 +279,19 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertTrue($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l2, 'createdAccount', $a1);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l2);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l2);
         $this->assertFalse($isRelated);
 
 
         $em->getRepository('Lead')->relate($l2, 'createdAccount', $a1);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l2);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l2);
         $this->assertTrue($isRelated);
 
         $isRelated = $em->getRepository('Lead')->isRelated($l2, 'createdAccount', $a1);
@@ -262,7 +302,7 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $isRelated = $em->getRepository('Lead')->isRelated($l1, 'createdAccount', $a1);
         $this->assertFalse($isRelated);
 
-        $isRelated = $em->getRepository('Lead')->isRelated($a1, 'originalLead', $l1);
+        $isRelated = $em->getRepository('Account')->isRelated($a1, 'originalLead', $l1);
         $this->assertFalse($isRelated);
 
         $c = $em->getRepository('Lead')->where(['createdAccountId' => $a1->id])->count();
@@ -295,7 +335,7 @@ class MapperTest extends \tests\integration\Core\BaseTestCase
         $this->assertFalse($isRelated);
 
         $em->getRepository('Lead')->relate($l1, 'createdAccount', $a1);
-        $em->getRepository('Lead')->unrelate($a1, 'originalLead', $l1);
+        $em->getRepository('Account')->unrelate($a1, 'originalLead', $l1);
 
         $l1 = $em->getEntity('Lead', $l1->id);
 

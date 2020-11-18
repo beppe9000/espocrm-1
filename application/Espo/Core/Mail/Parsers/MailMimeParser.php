@@ -29,13 +29,20 @@
 
 namespace Espo\Core\Mail\Parsers;
 
+use ZBateson\MailMimeParser\MailMimeParser as Parser;
+
+use Espo\Entities\Email as EmailEntity;
+
+/**
+ * An adapter for MailMimeParser library.
+ */
 class MailMimeParser
 {
     private $entityManager;
 
-    private $parser = array();
+    private $parser = [];
 
-    protected $messageHash = array();
+    protected $messageHash = [];
 
     public function __construct($entityManager)
     {
@@ -50,7 +57,7 @@ class MailMimeParser
     protected function getParser()
     {
         if (!$this->parser) {
-            $this->parser = new \ZBateson\MailMimeParser\MailMimeParser();
+            $this->parser = new Parser();
         }
 
         return $this->parser;
@@ -106,7 +113,7 @@ class MailMimeParser
 
         foreach (['from', 'to', 'cc', 'reply-To'] as $type) {
             $header = $this->getMessage($message)->getHeader($type);
-            if ($header) {
+            if ($header && method_exists($header, 'getAddresses')) {
                 $list = $header->getAddresses();
                 foreach ($list as $item) {
                     $address = $item->getEmail();
@@ -125,7 +132,7 @@ class MailMimeParser
     {
         $addressList = [];
         $header = $this->getMessage($message)->getHeader($type);
-        if ($header) {
+        if ($header && method_exists($header, 'getAddresses')) {
             foreach ($header->getAddresses() as $item) {
                 return [
                     'address' => $item->getEmail(),
@@ -140,7 +147,7 @@ class MailMimeParser
     {
         $addressList = [];
         $header = $this->getMessage($message)->getHeader($type);
-        if ($header) {
+        if ($header && method_exists($header, 'getAddresses')) {
             $list = $header->getAddresses();
             foreach ($list as $address) {
                 $addressList[] = $address->getEmail();
@@ -149,7 +156,7 @@ class MailMimeParser
         return $addressList;
     }
 
-    public function fetchContentParts(\Espo\Entities\Email $email, $message, &$inlineAttachmentList = [])
+    public function fetchContentParts(EmailEntity $email, $message, &$inlineAttachmentList = [])
     {
         $this->loadContent($message);
 
@@ -181,7 +188,9 @@ class MailMimeParser
         if ($bodyHtml) {
             $email->set('isHtml', true);
             $email->set('body', $bodyHtml);
-            $email->set('bodyPlain', $bodyPlain);
+            if ($bodyPlain) {
+                $email->set('bodyPlain', $bodyPlain);
+            }
         } else {
             $email->set('isHtml', false);
             $email->set('body', $bodyPlain);
@@ -193,23 +202,29 @@ class MailMimeParser
         }
 
         $attachmentObjList = $this->getMessage($message)->getAllAttachmentParts();
-        $inlineIds = array();
+        $inlineIds = [];
 
         foreach ($attachmentObjList as $attachmentObj) {
             $attachment = $this->getEntityManager()->getEntity('Attachment');
 
-            $content = $attachmentObj->getContent();
-
             $disposition = $attachmentObj->getHeaderValue('Content-Disposition');
 
             $attachment = $this->getEntityManager()->getEntity('Attachment');
+
+            $contentType = $attachmentObj->getHeaderValue('Content-Type');
 
             $filename = $attachmentObj->getHeaderParameter('Content-Disposition', 'filename', null);
             if ($filename === null) {
                 $filename = $attachmentObj->getHeaderParameter('Content-Type', 'name', 'unnamed');
             }
             $attachment->set('name', $filename);
-            $attachment->set('type', $attachmentObj->getHeaderValue('Content-Type'));
+            $attachment->set('type', $contentType);
+
+            $content = '';
+            $binaryContentStream = $attachmentObj->getBinaryContentStream();
+            if ($binaryContentStream) {
+                $content = $binaryContentStream->getContents();
+            }
 
             $contentId = $attachmentObj->getHeaderValue('Content-ID');
 
@@ -257,4 +272,3 @@ class MailMimeParser
         }
     }
 }
-

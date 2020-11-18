@@ -37,8 +37,6 @@ class Currency extends Base
     {
         $converedFieldName = $fieldName . 'Converted';
 
-        $currencyColumnName = Util::toUnderScore($fieldName);
-
         $alias = $fieldName . 'CurrencyRate';
 
         $defs = [
@@ -48,19 +46,20 @@ class Currency extends Base
                         'type' => 'float',
                     ]
                 ]
-            ]
+            ],
         ];
 
-        $part = Util::toUnderScore($entityType) . "." . $currencyColumnName;
         $leftJoins = [
             [
                 'Currency',
                 $alias,
-                [$alias . '.id:' => $fieldName . 'Currency']
+                [$alias . '.id:' => $fieldName . 'Currency'],
             ]
         ];
 
-        $foreignAlias = "{$alias}{$entityType}Foreign";
+        $foreignCurrencyAlias = "{$alias}{$entityType}{alias}Foreign";
+
+        $mulExpression = "MUL:({$fieldName}, {$alias}.rate)";
 
         $params = $this->getFieldParams($fieldName);
         if (!empty($params['notStorable'])) {
@@ -69,44 +68,87 @@ class Currency extends Base
             $defs[$entityType]['fields'][$fieldName . 'Converted'] = [
                 'type' => 'float',
                 'select' => [
-                    'sql' => $part . " * {$alias}.rate",
+                    'select' => $mulExpression,
                     'leftJoins' => $leftJoins,
                 ],
                 'selectForeign' => [
-                    'sql' => "{alias}.{$currencyColumnName} * {$foreignAlias}.rate",
+                    'select' => "MUL:({alias}.{$fieldName}, {$foreignCurrencyAlias}.rate)",
                     'leftJoins' => [
                         [
                             'Currency',
-                            $foreignAlias,
+                            $foreignCurrencyAlias,
                             [
-                                $foreignAlias . '.id:' => "{alias}.{$fieldName}Currency"
+                                $foreignCurrencyAlias . '.id:' => "{alias}.{$fieldName}Currency",
                             ]
                         ]
                     ],
                 ],
-                'where' =>
-                [
-                        "=" => ['sql' => $part . " * {$alias}.rate = {value}", 'leftJoins' => $leftJoins],
-                        ">" => ['sql' => $part . " * {$alias}.rate > {value}", 'leftJoins' => $leftJoins],
-                        "<" => ['sql' => $part . " * {$alias}.rate < {value}", 'leftJoins' => $leftJoins],
-                        ">=" => ['sql' => $part . " * {$alias}.rate >= {value}", 'leftJoins' => $leftJoins],
-                        "<=" => ['sql' => $part . " * {$alias}.rate <= {value}", 'leftJoins' => $leftJoins],
-                        "<>" => ['sql' => $part . " * {$alias}.rate <> {value}", 'leftJoins' => $leftJoins],
-                        "IS NULL" => ['sql' => $part . ' IS NULL'],
-                        "IS NOT NULL" => ['sql' => $part . ' IS NOT NULL'],
+                'where' => [
+                    "=" => [
+                        'whereClause' => [
+                            $mulExpression . '=' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    ">" => [
+                        'whereClause' => [
+                            $mulExpression . '>' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    "<" => [
+                        'whereClause' => [
+                            $mulExpression . '<' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    ">=" => [
+                        'whereClause' => [
+                            $mulExpression . '>=' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    "<=" => [
+                        'whereClause' => [
+                            $mulExpression . '<=' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    "<>" => [
+                        'whereClause' => [
+                            $mulExpression . '!=' => '{value}',
+                        ],
+                        'leftJoins' => $leftJoins,
+                    ],
+                    "IS NULL" => [
+                        'whereClause' => [
+                            $fieldName . '=' => null,
+                        ],
+                    ],
+                    "IS NOT NULL" => [
+                        'whereClause' => [
+                            $fieldName . '!=' => null,
+                        ],
+                    ],
                 ],
                 'notStorable' => true,
-                'orderBy' => [
-                    'sql' => $converedFieldName . " {direction}",
+                'order' => [
+                    'order' => [
+                        [$mulExpression, '{direction}'],
+                    ],
                     'leftJoins' => $leftJoins,
+                    'additionalSelect' => ["{$alias}.rate"],
                 ],
                 'attributeRole' => 'valueConverted',
                 'fieldType' => 'currency',
             ];
 
-            $defs[$entityType]['fields'][$fieldName]['orderBy'] = [
-                'sql' => $part . " * {$alias}.rate {direction}",
+            $defs[$entityType]['fields'][$fieldName]['order'] = [
+                "order" => [
+                    [$mulExpression, '{direction}'],
+                ],
                 'leftJoins' => $leftJoins,
+                'additionalSelect' => ["{$alias}.rate"],
             ];
         }
 

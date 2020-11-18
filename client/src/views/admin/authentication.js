@@ -55,6 +55,11 @@ define('views/admin/authentication', 'views/settings/record/edit', function (Dep
             this.listenTo(this.model, 'change:auth2FA', function () {
                 this.manage2FAFields();
             }, this);
+
+            this.managePasswordRecoveryFields();
+            this.listenTo(this.model, 'change:passwordRecoveryDisabled', function () {
+                this.managePasswordRecoveryFields();
+            }, this);
         },
 
         setupBeforeFinal: function () {
@@ -116,11 +121,25 @@ define('views/admin/authentication', 'views/settings/record/edit', function (Dep
 
         manage2FAFields: function () {
             if (this.model.get('auth2FA')) {
+                this.showField('auth2FAForced');
                 this.showField('auth2FAMethodList');
                 this.setFieldRequired('auth2FAMethodList');
             } else {
+                this.hideField('auth2FAForced');
                 this.hideField('auth2FAMethodList');
                 this.setFieldNotRequired('auth2FAMethodList');
+            }
+        },
+
+        managePasswordRecoveryFields: function () {
+            if (!this.model.get('passwordRecoveryDisabled')) {
+                this.showField('passwordRecoveryForAdminDisabled');
+                this.showField('passwordRecoveryForInternalUsersDisabled');
+                this.showField('passwordRecoveryNoExposure');
+            } else {
+                this.hideField('passwordRecoveryForAdminDisabled');
+                this.hideField('passwordRecoveryForInternalUsersDisabled');
+                this.hideField('passwordRecoveryNoExposure');
             }
         },
 

@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('crm:views/meeting/record/list', 'views/record/list', function (Dep) {
+define('crm:views/meeting/record/list', 'views/record/list', function (Dep) {
 
     return Dep.extend({
 
@@ -34,8 +34,11 @@ Espo.define('crm:views/meeting/record/list', 'views/record/list', function (Dep)
 
         setup: function () {
             Dep.prototype.setup.call(this);
-            this.massActionList.push('setHeld');
-            this.massActionList.push('setNotHeld');
+
+            if (this.getAcl().checkScope(this.entityType, 'edit')) {
+                this.massActionList.push('setHeld');
+                this.massActionList.push('setNotHeld');
+            }
         },
 
         actionSetHeld: function (data) {
@@ -81,7 +84,8 @@ Espo.define('crm:views/meeting/record/list', 'views/record/list', function (Dep)
         },
 
         massActionSetHeld: function () {
-            this.notify('Please wait...');
+            Espo.Ui.notify(this.translate('saving', 'messages'));
+
             var data = {};
             data.ids = this.checkedList;
             $.ajax({
@@ -102,7 +106,8 @@ Espo.define('crm:views/meeting/record/list', 'views/record/list', function (Dep)
         },
 
         massActionSetNotHeld: function () {
-            this.notify('Please wait...');
+            Espo.Ui.notify(this.translate('saving', 'messages'));
+
             var data = {};
             data.ids = this.checkedList;
             $.ajax({

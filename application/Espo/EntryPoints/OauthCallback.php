@@ -29,16 +29,20 @@
 
 namespace Espo\EntryPoints;
 
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\EntryPoints\{
+    EntryPoint,
+    NoAuth,
+};
 
-class OauthCallback extends \Espo\Core\EntryPoints\Base
+use Espo\Core\Api\Request;
+
+class OauthCallback implements EntryPoint
 {
-    public static $authRequired = false;
+    use NoAuth;
 
-    public function run()
+    public function run(Request $request)
     {
-        echo "EspoCRM rocks! If this window is not closed automatically, it's probable that URL you use to access EspoCRM doesn't match URL specified at Administration > Settings > Site URL.";
+        echo "If this window is not closed automatically, it's probable that URL you use to access ".
+        "EspoCRM doesn't match URL specified at Administration > Settings > Site URL.";
     }
 }

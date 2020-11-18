@@ -29,63 +29,84 @@
 
 namespace Espo\ORM;
 
-class SthCollection implements \IteratorAggregate, ICollection
+use Espo\ORM\{
+    QueryParams\Select as SelectQuery,
+    QueryComposer\QueryComposer as QueryComposer,
+};
+
+use IteratorAggregate;
+use Countable;
+use PDO;
+
+/**
+ * Reasonable to use when selecting a large number of records.
+ * It doesn't allocate a memory for every entity.
+ * Entities are fetched on each iteration while traversing a collection.
+ *
+ * STH stands for Statement Handle.
+ */
+class SthCollection implements Collection, IteratorAggregate, Countable
 {
-    protected $entityManager = null;
+    protected $entityManager;
 
     protected $entityType;
 
-    protected $selectParams = null;
+    protected $query = null;
 
     private $sth = null;
 
     private $sql = null;
 
-    protected $isFetched = false;
+    protected $entityList = [];
 
-    public function __construct(string $entityType, EntityManager $entityManager = null, array $selectParams = [])
+    protected function __construct(EntityManager $entityManager)
     {
-        $this->selectParams = $selectParams;
-        $this->entityType = $entityType;
         $this->entityManager = $entityManager;
     }
 
-    protected function getQuery()
+    protected function getQueryComposer() : QueryComposer
     {
-        return $this->entityManager->getQuery();
+        return $this->entityManager->getQueryComposer();
     }
 
-    protected function getPdo()
-    {
-        return $this->entityManager->getPdo();
-    }
-
-    protected function getEntityFactory()
+    protected function getEntityFactory() : EntityFactory
     {
         return $this->entityManager->getEntityFactory();
     }
 
-    public function setSelectParams(array $selectParams)
-    {
-        $this->selectParams = $selectParams;
-    }
-
-    public function setQuery(?string $sql)
+    protected function setSql(string $sql)
     {
         $this->sql = $sql;
     }
 
-    public function executeQuery()
+    protected function getPDO() : PDO
     {
-        if ($this->sql) {
-            $sql = $this->sql;
-        } else {
-            $sql = $this->getQuery()->createSelectQuery($this->entityType, $this->selectParams);
-        }
-        $sth = $this->getPdo()->prepare($sql);
+        return $this->entityManager->getPDO();
+    }
+
+    protected function executeQuery()
+    {
+        $sql = $this->getSql();
+
+        $sth = $this->getPDO()->prepare($sql);
+
         $sth->execute();
 
         $this->sth = $sth;
+    }
+
+    protected function getSql() : string
+    {
+        if (!$this->sql) {
+            $this->sql = $this->getQueryComposer()->compose($this->getQuery());
+        }
+
+        return $this->sql;
+    }
+
+    protected function getQuery() : SelectQuery
+    {
+        return $this->query;
     }
 
     public function getIterator()
@@ -94,29 +115,58 @@ class SthCollection implements \IteratorAggregate, ICollection
             if (isset($this->sth)) {
                 $this->sth->execute();
             }
+
             while ($row = $this->fetchRow()) {
                 $entity = $this->getEntityFactory()->create($this->entityType);
+
                 $entity->set($row);
                 $entity->setAsFetched();
+
                 $this->prepareEntity($entity);
+
+                $this->entityList[] = $entity;
+
                 yield $entity;
             }
         })();
     }
 
-    protected function fetchRow()
+    protected function executeQueryIfNotExecuted()
     {
         if (!$this->sth) {
             $this->executeQuery();
         }
+    }
+
+    protected function fetchRow()
+    {
+        $this->executeQueryIfNotExecuted();
+
         return $this->sth->fetch(\PDO::FETCH_ASSOC);
+    }
+
+    public function count() : int
+    {
+        $this->executeQueryIfNotExecuted();
+
+        $rowCount = $this->sth->rowCount();
+
+        // MySQL may not return a row count for select queries.
+        if ($rowCount) {
+            return $rowCount;
+        }
+
+        return count($this->getValueMapList());
     }
 
     protected function prepareEntity(Entity $entity)
     {
     }
 
-    public function toArray($itemsAsObjects = false)
+    /**
+     * @deprecated
+     */
+    public function toArray(bool $itemsAsObjects = false) : array
     {
         $arr = [];
         foreach ($this as $entity) {
@@ -130,29 +180,45 @@ class SthCollection implements \IteratorAggregate, ICollection
         return $arr;
     }
 
-    public function getValueMapList()
+    public function getValueMapList() : array
     {
         return $this->toArray(true);
     }
 
 
-    public function setAsFetched()
+    /**
+     * Whether Is fetched from DB. SthCollection is always fetched.
+     */
+    public function isFetched() : bool
     {
-        $this->isFetched = true;
+        return true;
     }
 
-    public function setAsNotFetched()
-    {
-        $this->isFetched = false;
-    }
-
-    public function isFetched()
-    {
-        return $this->isFetched;
-    }
-
-    public function getEntityType()
+    /**
+     * Get an entity type.
+     */
+    public function getEntityType() : string
     {
         return $this->entityType;
+    }
+
+    public static function fromQuery(SelectQuery $query, EntityManager $entityManager) : self
+    {
+        $obj = new self($entityManager);
+
+        $obj->entityType = $query->getFrom();
+        $obj->query = $query;
+
+        return $obj;
+    }
+
+    public static function fromSql(string $entityType, string $sql, EntityManager $entityManager) : self
+    {
+        $obj = new self($entityManager);
+
+        $obj->entityType = $entityType;
+        $obj->sql = $sql;
+
+        return $obj;
     }
 }

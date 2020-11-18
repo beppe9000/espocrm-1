@@ -29,9 +29,9 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
+use Espo\ORM\Entity;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Error;
 
 class EmailAddress extends Record
 {
@@ -140,25 +140,24 @@ class EmailAddress extends Record
 
     protected function findInInboundEmail($query, $limit, &$result)
     {
-        $pdo = $this->getEntityManager()->getPDO();
+        if ($this->getUser()->isPortal()) {
+            return [];
+        }
 
-        $selectParams = [
-            'select' => ['id', 'name', 'emailAddress'],
-            'whereClause' => [
-                'emailAddress*' => $query . '%'
-            ],
-            'orderBy' => 'name',
-        ];
-        $qu = $this->getEntityManager()->getQuery()->createSelectQuery('InboundEmail', $selectParams);
+        $list = $this->getEntityManager()->getRepository('InboundEmail')
+            ->select(['id', 'name', 'emailAddress'])
+            ->where([
+                'emailAddress*' => $query . '%',
+            ])
+            ->order('name')
+            ->find();
 
-        $sth = $pdo->prepare($qu);
-        $sth->execute();
-        while ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
+        foreach ($list as $item) {
             $result[] = [
-                'emailAddress' => $row['emailAddress'],
-                'entityName' => $row['name'],
+                'emailAddress' => $item->get('emailAddress'),
+                'entityName' => $item->get('name'),
                 'entityType' => 'InboundEmail',
-                'entityId' => $row['id']
+                'entityId' => $item->get('id'),
             ];
         }
     }
@@ -167,22 +166,16 @@ class EmailAddress extends Record
     {
         $result = [];
 
-        $this->findInAddressBookByEntityType($query, $limit, 'User', $result, $onlyActual);
-        if ($this->getAcl()->checkScope('Contact')) {
-            $this->findInAddressBookByEntityType($query, $limit, 'Contact', $result, $onlyActual);
+        $entityTypeList = $this->getConfig()->get('emailAddressLookupEntityTypeList') ?? [];
+        $allEntityTypeList = $this->getHavingEmailAddressEntityTypeList();
+
+        foreach ($entityTypeList as $entityType) {
+            if (!in_array($entityType, $allEntityTypeList)) continue;
+            if (!$this->getAcl()->checkScope($entityType)) continue;
+            $this->findInAddressBookByEntityType($query, $limit, $entityType, $result, $onlyActual);
         }
-        if ($this->getAcl()->checkScope('Lead')) {
-            $this->findInAddressBookByEntityType($query, $limit, 'Lead', $result, $onlyActual);
-        }
-        if ($this->getAcl()->checkScope('Account')) {
-            $this->findInAddressBookByEntityType($query, $limit, 'Account', $result, $onlyActual);
-        }
+
         $this->findInInboundEmail($query, $limit, $result);
-        foreach ($this->getHavingEmailAddressEntityTypeList() as $entityType) {
-            if ($this->getAcl()->checkScope($entityType)) {
-                $this->findInAddressBookByEntityType($query, $limit, $entityType, $result, $onlyActual);
-            }
-        }
 
         $finalResult = [];
 
@@ -213,7 +206,8 @@ class EmailAddress extends Record
 
     protected function getHavingEmailAddressEntityTypeList()
     {
-        $list = [];
+        $list = ['Account', 'Contact', 'Lead', 'User'];
+
         $scopeDefs = $this->getMetadata()->get(['scopes']);
         foreach ($scopeDefs as $scope => $defs) {
             if (empty($defs['disabled']) && !empty($defs['type']) && ($defs['type'] === 'Person' || $defs['type'] === 'Company')) {

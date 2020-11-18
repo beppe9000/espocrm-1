@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (Dep, EmailHelper) {
+define('views/email/detail', ['views/detail', 'email-helper'], function (Dep, EmailHelper) {
 
     return Dep.extend({
 
@@ -57,19 +57,19 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
 
                 this.addMenuItem('dropdown', false);
 
-                if (status == 'Archived' || status == 'Recieved') {
+                if (status == 'Archived') {
                     if (!this.model.get('parentId')) {
                         this.addMenuItem('dropdown', {
                             label: 'Create Lead',
                             action: 'createLead',
-                            acl: 'edit',
+                            acl: 'create',
                             aclScope: 'Lead'
                         });
 
                         this.addMenuItem('dropdown', {
                             label: 'Create Contact',
                             action: 'createContact',
-                            acl: 'edit',
+                            acl: 'create',
                             aclScope: 'Contact'
                         });
                     }
@@ -78,7 +78,7 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
                 this.addMenuItem('dropdown', {
                     label: 'Create Task',
                     action: 'createTask',
-                    acl: 'edit',
+                    acl: 'create',
                     aclScope: 'Task'
                 });
 
@@ -86,14 +86,38 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
                     this.addMenuItem('dropdown', {
                         label: 'Create Case',
                         action: 'createCase',
-                        acl: 'edit',
+                        acl: 'create',
                         aclScope: 'Case'
                     });
                 }
+
+                if (this.getAcl().checkScope('Document', 'create')) {
+                    if (
+                        this.model.get('attachmentsIds') === undefined || this.model.getLinkMultipleIdList('attachments').length
+                    ) {
+                        this.addMenuItem('dropdown', {
+                            html: this.translate('Create Document', 'labels', 'Document'),
+                            action: 'createDocument',
+                            acl: 'create',
+                            aclScope: 'Document',
+                            hidden: this.model.get('attachmentsIds') === undefined,
+                        });
+
+                        if (this.model.get('attachmentsIds') === undefined) {
+                            this.listenToOnce(this.model, 'sync', function () {
+                                if (this.model.getLinkMultipleIdList('attachments').length) {
+                                    this.showHeaderActionItem('createDocument');
+                                }
+                            }, this);
+                        }
+                    }
+                }
             }
 
-            this.listenTo(this.model, 'change:isImportant', function () {
+            this.listenTo(this.model, 'change', function () {
                 if (!this.isRendered()) return;
+                if (!this.model.hasChanged('isImportant') && !this.model.hasChanged('inTrash')) return;
+
                 var headerView = this.getView('header');
                 if (headerView) {
                     headerView.reRender();
@@ -144,7 +168,10 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
             }, function (view) {
                 view.render();
                 view.notify(false);
-                view.once('after:save', function () {
+                this.listenTo(view, 'before:save', function () {
+                    this.getView('record').blockUpdateWebSocket(true);
+                }, this);
+                this.listenToOnce(view, 'after:save', function () {
                     this.model.fetch();
                     this.removeMenuItem('createContact');
                     this.removeMenuItem('createLead');
@@ -203,6 +230,9 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
                         this.removeMenuItem('createCase');
                         view.close();
                     }, this);
+                    this.listenTo(view, 'before:save', function () {
+                        this.getView('record').blockUpdateWebSocket(true);
+                    }, this);
                 });
             }.bind(this));
         },
@@ -227,7 +257,7 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
             }, function (view) {
                 view.render();
                 view.notify(false);
-                view.once('after:save', function () {
+                this.listenToOnce(view, 'after:save', function () {
                     view.close();
                 }.bind(this));
             }.bind(this));
@@ -276,12 +306,15 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
             }, function (view) {
                 view.render();
                 view.notify(false);
-                view.once('after:save', function () {
+                this.listenToOnce(view, 'after:save', function () {
                     this.model.fetch();
                     this.removeMenuItem('createContact');
                     this.removeMenuItem('createLead');
                     view.close();
                 }.bind(this));
+                    this.listenTo(view, 'before:save', function () {
+                        this.getView('record').blockUpdateWebSocket(true);
+                    }, this);
             }.bind(this));
 
         },
@@ -374,19 +407,25 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
 
         getHeader: function () {
             var name = Handlebars.Utils.escapeExpression(this.model.get('name'));
-            var nameHtml = name;
+            var nameHtml = '<span class="font-size-flexible title">' + name + '</span>'
+
+            var classPart = '';
             if (this.model.get('isImportant')) {
-                nameHtml = '<span class="text-warning font-size-flexible title">' + name + '</span>'
-            } else {
-                nameHtml = '<span class="font-size-flexible title">' + name + '</span>'
+                classPart += ' text-warning';
             }
+            if (this.model.get('inTrash')) {
+                classPart += ' text-muted';
+            }
+
+            nameHtml = '<span class="font-size-flexible title'+classPart+'">' + name + '</span>'
 
             var rootUrl = this.options.rootUrl || this.options.params.rootUrl || '#' + this.scope;
 
             var headerIconHtml = this.getHeaderIconHtml();
 
             return this.buildHeaderHtml([
-                headerIconHtml+ '<a href="' + rootUrl + '" class="action" data-action="navigateToRoot">' + this.getLanguage().translate(this.model.name, 'scopeNamesPlural') + '</a>',
+                headerIconHtml + '<a href="' + rootUrl + '" class="action" data-action="navigateToRoot">' +
+                    this.getLanguage().translate(this.model.name, 'scopeNamesPlural') + '</a>',
                 nameHtml
             ]);
         },
@@ -403,7 +442,74 @@ Espo.define('views/email/detail', ['views/detail', 'email-helper'], function (De
                 this.getRouter().navigate(rootUrl, {trigger: false});
                 this.getRouter().dispatch(this.scope, null, options);
             }, this);
-        }
+        },
+
+        actionCreateDocument: function () {
+            var attachmentIdList = this.model.getLinkMultipleIdList('attachments');
+            if (!attachmentIdList.length) return;
+
+            var names = this.model.get('attachmentsNames') || {};
+            var types = this.model.get('attachmentsTypes') || {};
+
+            var proceed = function (id) {
+                var name = names[id] || id;
+                var type = types[id];
+
+                var attributes = {};
+
+                if (this.model.get('accountId')) {
+                    attributes.accountsIds = [this.model.get('accountId')];
+                    attributes.accountsNames = {};
+                    attributes.accountsNames[this.model.get('accountId')] = this.model.get('accountName');
+                }
+
+                Espo.Ui.notify(this.translate('loading', 'messages'))
+
+                this.ajaxPostRequest('Attachment/action/getCopiedAttachment', {
+                    id: id,
+                    relatedType: 'Document',
+                    field: 'file',
+                }).then(
+                    function (attachment) {
+                        attributes.fileId = attachment.id;
+                        attributes.fileName = attachment.name;
+                        attributes.name = attachment.name;
+
+                        var viewName = this.getMetadata().get('clientDefs.Document.modalViews.edit') || 'views/modals/edit';
+                        this.createView('quickCreate', viewName, {
+                            scope: 'Document',
+                            attributes: attributes,
+                        }, function (view) {
+                            view.render();
+                            Espo.Ui.notify(false);
+                            this.listenToOnce(view, 'after:save', function () {
+                                view.close();
+                            }, this);
+                        });
+                    }.bind(this)
+                );
+            }.bind(this);
+
+            if (attachmentIdList.length === 1) {
+                proceed(attachmentIdList[0]);
+            } else {
+                var dataList = [];
+                attachmentIdList.forEach(function (id) {
+                    dataList.push({
+                        id: id,
+                        name: names[id] || id,
+                        type: types[id],
+                    });
+                }, this);
+                this.createView('dialog', 'views/attachment/modals/select-one', {
+                    dataList: dataList,
+                    fieldLabel: this.translate('attachments', 'fields', 'Email'),
+                }, function (view) {
+                    view.render();
+                    this.listenToOnce(view, 'select', proceed.bind(this))
+                });
+            }
+        },
 
     });
 });

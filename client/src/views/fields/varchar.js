@@ -26,7 +26,7 @@
  * these Appropriate Legal Notices must retain the display of the "EspoCRM" word.
  ************************************************************************/
 
-Espo.define('views/fields/varchar', 'views/fields/base', function (Dep) {
+define('views/fields/varchar', 'views/fields/base', function (Dep) {
 
     return Dep.extend({
 
@@ -38,7 +38,10 @@ Espo.define('views/fields/varchar', 'views/fields/base', function (Dep) {
 
         searchTemplate: 'fields/varchar/search',
 
-        searchTypeList: ['startsWith', 'contains', 'equals', 'endsWith', 'like', 'notContains', 'notEquals', 'notLike', 'isEmpty', 'isNotEmpty'],
+        searchTypeList: [
+            'startsWith', 'contains', 'equals', 'endsWith', 'like', 'notContains',
+            'notEquals', 'notLike', 'isEmpty', 'isNotEmpty',
+        ],
 
         setup: function () {
             this.setupOptions();
@@ -125,6 +128,11 @@ Espo.define('views/fields/varchar', 'views/fields/base', function (Dep) {
                     minChars: 0,
                     lookup: this.params.options,
                     maxHeight: 200,
+                    beforeRender: function ($c) {
+                        if (this.$element.hasClass('input-sm')) {
+                            $c.addClass('small');
+                        }
+                    }.bind(this),
                     formatResult: function (suggestion) {
                         return this.getHelper().escapeString(suggestion.value);
                     }.bind(this),
@@ -151,6 +159,16 @@ Espo.define('views/fields/varchar', 'views/fields/base', function (Dep) {
                 this.once('remove', function () {
                     this.$element.autocomplete('dispose');
                 }, this);
+            }
+
+            if (this.mode === 'search') {
+                this.$el.find('select.search-type').on('change', function () {
+                    this.trigger('change');
+                }.bind(this));
+
+                this.$element.on('input', function () {
+                    this.trigger('change');
+                }.bind(this));
             }
         },
 

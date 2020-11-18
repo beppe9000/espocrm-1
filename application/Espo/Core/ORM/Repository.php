@@ -29,11 +29,17 @@
 
 namespace Espo\Core\ORM;
 
-use \Espo\Core\Interfaces\Injectable;
+use Espo\Core\Interfaces\Injectable;
 
-use \Espo\ORM\EntityFactory;
+use Espo\ORM\{
+    EntityFactory,
+    Repository\RDBRepository as RDBRepository,
+};
 
-abstract class Repository extends \Espo\ORM\Repository implements Injectable
+/**
+ * @deprecated
+ */
+abstract class Repository extends RDBRepository implements Injectable
 {
     protected $dependencyList = [];
 

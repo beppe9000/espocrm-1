@@ -29,7 +29,6 @@
 define('view-helper', ['lib!client/lib/purify.min.js'], function () {
 
     var ViewHelper = function (options) {
-        this.urlRegex = /(^|[^\(])(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
         this._registerHandlebarsHelpers();
 
         this.mdBeforeList = [
@@ -125,7 +124,8 @@ define('view-helper', ['lib!client/lib/purify.min.js'], function () {
                 className += ' ' + additionalClassName;
             }
 
-            return '<img class="'+className+'" width="'+width+'" src="'+basePath+'?entryPoint=avatar&size='+size+'&id=' + id + '&t='+t+'">';
+            return '<img class="'+className+'" width="'+width+'" src="'+basePath+
+                '?entryPoint=avatar&size='+size+'&id=' + id + '&t='+t+'">';
         },
 
         _registerHandlebarsHelpers: function () {
@@ -315,8 +315,6 @@ define('view-helper', ['lib!client/lib/purify.min.js'], function () {
         transfromMarkdownText: function (text, options) {
             text = text || '';
 
-            text = text.replace(this.urlRegex, '$1[$2]($2)');
-
             text = Handlebars.Utils.escapeExpression(text).replace(/&gt;+/g, '>');
 
             this.mdBeforeList.forEach(function (item) {
@@ -332,6 +330,10 @@ define('view-helper', ['lib!client/lib/purify.min.js'], function () {
             }
 
             text = DOMPurify.sanitize(text).toString();
+
+            if (options.linksInNewTab) {
+                text = text.replace(/<a href=/gm, '<a target="_blank" rel="noopener noreferrer" href=');
+            }
 
             text = text.replace(/<a href="mailto:(.*)"/gm, '<a href="javascript:" data-email-address="$1" data-action="mailTo"');
 

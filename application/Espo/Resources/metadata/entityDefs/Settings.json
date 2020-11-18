@@ -2,7 +2,8 @@
     "fields": {
         "useCache": {
             "type": "bool",
-            "default": true
+            "default": true,
+            "tooltip": true
         },
         "recordsPerPage": {
             "type": "int",
@@ -27,8 +28,8 @@
         },
         "dateFormat": {
             "type": "enum",
-            "options": ["MM/DD/YYYY", "YYYY-MM-DD", "DD.MM.YYYY", "DD/MM/YYYY"],
-            "default": "MM/DD/YYYY"
+            "options": ["DD.MM.YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"],
+            "default": "DD.MM.YYYY"
         },
         "timeFormat": {
             "type": "enum",
@@ -61,7 +62,8 @@
             "type": "multiEnum",
             "default": ["USD", "EUR"],
             "required": true,
-            "view": "views/settings/fields/currency-list"
+            "view": "views/settings/fields/currency-list",
+            "tooltip": true
         },
         "defaultCurrency": {
             "type": "enum",
@@ -92,15 +94,22 @@
         "outboundEmailFromAddress": {
             "type": "varchar",
             "default": "crm@example.com",
-            "trim": true
+            "trim": true,
+            "tooltip": true
+        },
+        "emailAddressLookupEntityTypeList": {
+            "type": "multiEnum",
+            "tooltip": true,
+            "view": "views/settings/fields/email-address-lookup-entity-type-list"
         },
         "smtpServer": {
-            "type": "varchar"
+            "type": "varchar",
+            "tooltip": true
         },
         "smtpPort": {
             "type": "int",
             "min": 0,
-            "max": 9999,
+            "max": 65535,
             "default": 587
         },
         "smtpAuth": {
@@ -136,7 +145,8 @@
         "globalSearchEntityList": {
             "type": "multiEnum",
             "translation": "Global.scopeNames",
-            "view": "views/settings/fields/global-search-entity-list"
+            "view": "views/settings/fields/global-search-entity-list",
+            "tooltip": true
         },
         "exportDelimiter": {
             "type": "varchar",
@@ -159,11 +169,22 @@
             "type": "multiEnum",
             "view": "views/settings/fields/auth-two-fa-method-list"
         },
+        "auth2FAForced": {
+            "type": "bool"
+        },
         "passwordRecoveryDisabled": {
             "type": "bool"
         },
         "passwordRecoveryForAdminDisabled": {
             "type": "bool"
+        },
+        "passwordRecoveryForInternalUsersDisabled": {
+            "type": "bool",
+            "tooltip": true
+        },
+        "passwordRecoveryNoExposure": {
+            "type": "bool",
+            "tooltip": true
         },
         "passwordGenerateLength": {
             "type": "int",
@@ -308,12 +329,14 @@
         },
         "exportDisabled": {
             "type": "bool",
-            "default": false
+            "default": false,
+            "tooltip": true
         },
         "emailNotificationsDelay": {
             "type": "int",
             "min": 0,
-            "max": 18000
+            "max": 18000,
+            "tooltip": true
         },
         "assignmentEmailNotifications": {
             "type": "bool",
@@ -380,7 +403,8 @@
             "type": "varchar"
         },
         "displayListViewRecordCount": {
-            "type": "bool"
+            "type": "bool",
+            "tooltip": true
         },
         "userThemesDisabled": {
             "type": "bool",
@@ -442,7 +466,8 @@
             "disabled": true
         },
         "siteUrl": {
-            "type": "varchar"
+            "type": "varchar",
+            "tooltip": true
         },
         "applicationName": {
             "type": "varchar"
@@ -471,7 +496,7 @@
         },
         "currencyFormat": {
             "type": "enumInt",
-            "options": [1, 2]
+            "options": [1, 2, 3]
         },
         "currencyDecimalPlaces": {
             "type": "int",
@@ -484,15 +509,23 @@
         },
         "calendarEntityList": {
             "type": "multiEnum",
-            "view": "views/settings/fields/calendar-entity-list"
+            "view": "views/settings/fields/calendar-entity-list",
+            "tooltip": true
         },
         "activitiesEntityList": {
             "type": "multiEnum",
-            "view": "views/settings/fields/activities-entity-list"
+            "view": "views/settings/fields/activities-entity-list",
+            "tooltip": true
         },
         "historyEntityList": {
             "type": "multiEnum",
-            "view": "views/settings/fields/history-entity-list"
+            "view": "views/settings/fields/history-entity-list",
+            "tooltip": true
+        },
+        "busyRangesEntityList": {
+            "type": "multiEnum",
+            "tooltip": true,
+            "view": "views/settings/fields/busy-ranges-entity-list"
         },
         "googleMapsApiKey": {
             "type": "varchar",
@@ -554,13 +587,16 @@
             "tooltip": true
         },
         "addressCountryList": {
-            "type": "multiEnum"
+            "type": "multiEnum",
+            "tooltip": true
         },
         "addressCityList": {
-            "type": "multiEnum"
+            "type": "multiEnum",
+            "tooltip": true
         },
         "addressStateList": {
-            "type": "multiEnum"
+            "type": "multiEnum",
+            "tooltip": true
         },
         "jobRunInParallel": {
             "type": "bool",
@@ -597,7 +633,8 @@
             "tooltip": true
         },
         "useWebSocket": {
-            "type": "bool"
+            "type": "bool",
+            "tooltip": true
         }
     }
 }

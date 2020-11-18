@@ -29,9 +29,20 @@
 
 namespace Espo\Core\Utils;
 
+use Espo\Core\{
+    Exceptions\Error,
+    Utils\File\Manager as FileManager,
+    Utils\File\FileUnifier,
+    Utils\DataCache,
+    Utils\Config,
+};
+
+/**
+ * Gets module parameters.
+ */
 class Module
 {
-    private $fileManager;
+    const DEFAULT_ORDER = 10;
 
     private $useCache;
 
@@ -39,38 +50,32 @@ class Module
 
     protected $data = null;
 
-    protected $cacheFile = 'data/cache/application/modules.php';
+    protected $cacheKey = 'modules';
 
-    protected $paths = array(
+    protected $pathToModules = 'application/Espo/Modules';
+
+    protected $paths = [
         'corePath' => 'application/Espo/Resources/module.json',
         'modulePath' => 'application/Espo/Modules/{*}/Resources/module.json',
         'customPath' => 'custom/Espo/Custom/Resources/module.json',
-    );
+    ];
 
-    public function __construct(File\Manager $fileManager, $useCache = false)
+    private $fileManager;
+    private $dataCache;
+
+    public function __construct(FileManager $fileManager, ?DataCache $dataCache = null, bool $useCache = false)
     {
         $this->fileManager = $fileManager;
+        $this->dataCache = $dataCache;
 
-        $this->unifier = new \Espo\Core\Utils\File\FileUnifier($this->fileManager);
+        $this->unifier = new FileUnifier($this->fileManager);
 
         $this->useCache = $useCache;
     }
 
-    protected function getConfig()
-    {
-        return $this->config;
-    }
-
-    protected function getFileManager()
-    {
-        return $this->fileManager;
-    }
-
-    protected function getUnifier()
-    {
-        return $this->unifier;
-    }
-
+    /**
+     * Get module parameters.
+     */
     public function get($key = '', $returns = null)
     {
         if (!isset($this->data)) {
@@ -84,6 +89,9 @@ class Module
         return Util::getValueByKey($this->data, $key, $returns);
     }
 
+    /**
+     * Get parameters of all modules.
+     */
     public function getAll()
     {
         return $this->get();
@@ -91,17 +99,52 @@ class Module
 
     protected function init()
     {
-        if (file_exists($this->cacheFile) && $this->useCache) {
-            $this->data = $this->getFileManager()->getPhpContents($this->cacheFile);
-        } else {
-            $this->data = $this->getUnifier()->unify($this->paths, true);
+        if ($this->useCache && $this->dataCache->has($this->cacheKey)) {
+            $this->data = $this->dataCache->get($this->cacheKey);
 
-            if ($this->useCache) {
-                $result = $this->getFileManager()->putPhpContents($this->cacheFile, $this->data);
-                if ($result == false) {
-                    throw new \Espo\Core\Exceptions\Error('Module - Cannot save unified modules.');
-                }
-            }
+            return;
         }
+
+        $this->data = $this->unifier->unify($this->paths, true);
+
+        if ($this->useCache) {
+            $this->dataCache->store($this->cacheKey, $this->data);
+        }
+    }
+
+    /**
+     * Get an ordered list of modules.
+     */
+    public function getOrderedList() : array
+    {
+        $modules = $this->fileManager->getFileList($this->pathToModules, false, '', false);
+
+        $modulesToSort = [];
+
+        if (!is_array($modules)) {
+            return [];
+        }
+
+        foreach ($modules as $moduleName) {
+            if (empty($moduleName)) {
+                continue;
+            }
+
+            if (isset($modulesToSort[$moduleName])) {
+                continue;
+            }
+
+            $modulesToSort[$moduleName] = $this->get($moduleName . '.order', self::DEFAULT_ORDER);
+        }
+
+        array_multisort(
+            array_values($modulesToSort),
+            SORT_ASC,
+            array_keys($modulesToSort),
+            SORT_ASC,
+            $modulesToSort
+        );
+
+        return array_keys($modulesToSort);
     }
 }

@@ -29,79 +29,78 @@
 
 namespace Espo\Core;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\Error;
 
-use \Espo\ORM\Entity;
-use \Espo\Entities\User;
-use \Espo\Core\Utils\Util;
+use Espo\ORM\Entity;
+use Espo\Entities\User;
 
+use Espo\Core\{
+    Utils\ClassFinder,
+    Utils\Config,
+    ORM\EntityManager,
+    Acl\Acl as BaseAcl,
+    Acl\ScopeAcl,
+    Acl\GlobalRestricton,
+    Acl as UserAclWrapper,
+    Acl\Table as AclTable,
+    Utils\Util,
+};
+
+use StdClass;
+
+/**
+ * Used to check access for a specific user.
+ */
 class AclManager
 {
-    private $container;
-
-    private $metadata;
-
     private $implementationHashMap = [];
 
     private $tableHashMap = [];
 
-    protected $tableClassName = '\\Espo\\Core\\Acl\\Table';
+    protected $tableClassName = AclTable::class;
 
-    protected $userAclClassName = '\\Espo\\Core\\Acl';
+    protected $userAclClassName = UserAclWrapper::class;
+
+    protected $baseImplementationClassName = BaseAcl::class;
 
     protected $globalRestricton;
 
-    public function __construct(Container $container)
-    {
-        $this->container = $container;
-        $this->metadata = $container->get('metadata');
+    protected $injectableFactory;
+    protected $classFinder;
+    protected $config;
+    protected $entityManager;
 
-        $this->globalRestricton = new \Espo\Core\Acl\GlobalRestricton(
-            $container->get('metadata'),
-            $container->get('fileManager'),
-            $container->get('fieldManagerUtil'),
-            $container->get('config')->get('useCache')
-        );
+    public function __construct(
+        InjectableFactory $injectableFactory, ClassFinder $classFinder, Config $config, EntityManager $entityManager
+    ) {
+        $this->injectableFactory = $injectableFactory;
+        $this->classFinder = $classFinder;
+        $this->config = $config;
+        $this->entityManager = $entityManager;
+
+        $this->globalRestricton = $this->injectableFactory->createWith(GlobalRestricton::class, [
+            'useCache' => $config->get('useCache'),
+        ]);
     }
 
-    protected function getContainer()
-    {
-        return $this->container;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
-    }
-
-    public function getImplementation($scope)
+    public function getImplementation(string $scope) : ScopeAcl
     {
         if (empty($this->implementationHashMap[$scope])) {
-            $normalizedName = Util::normilizeClassName($scope);
+            $className = $this->classFinder->find('Acl', $scope);
 
-            $className = '\\Espo\\Custom\\Acl\\' . $normalizedName;
+            if (!$className) {
+                $className = $this->baseImplementationClassName;
+            }
+
             if (!class_exists($className)) {
-                $moduleName = $this->metadata->getScopeModuleName($scope);
-                if ($moduleName) {
-                    $className = '\\Espo\\Modules\\' . $moduleName . '\\Acl\\' . $normalizedName;
-                } else {
-                    $className = '\\Espo\\Acl\\' . $normalizedName;
-                }
-                if (!class_exists($className)) {
-                    $className = '\\Espo\\Core\\Acl\\Base';
-                }
+                throw new Error("{$className} does not exist.");
             }
 
-            if (class_exists($className)) {
-                $acl = new $className($scope);
-                $dependencyList = $acl->getDependencyList();
-                foreach ($dependencyList as $name) {
-                    $acl->inject($name, $this->getContainer()->get($name));
-                }
-                $this->implementationHashMap[$scope] = $acl;
-            } else {
-                throw new Error();
-            }
+            $acl = $this->injectableFactory->createWith($className, [
+                'scope' => $scope,
+            ]);
+
+            $this->implementationHashMap[$scope] = $acl;
         }
 
         return $this->implementationHashMap[$scope];
@@ -110,80 +109,115 @@ class AclManager
     protected function getTable(User $user)
     {
         $key = $user->id;
+
         if (empty($key)) {
             $key = spl_object_hash($user);
         }
 
         if (empty($this->tableHashMap[$key])) {
-            $config = $this->getContainer()->get('config');
-            $fileManager = $this->getContainer()->get('fileManager');
-            $metadata = $this->getContainer()->get('metadata');
-            $fieldManager = $this->getContainer()->get('fieldManagerUtil');
-
-            $this->tableHashMap[$key] = new $this->tableClassName($user, $config, $fileManager, $metadata, $fieldManager);
+            $this->tableHashMap[$key] = $this->injectableFactory->createWith($this->tableClassName, [
+                'user' => $user,
+            ]);
         }
 
         return $this->tableHashMap[$key];
     }
 
-    public function getMap(User $user)
+    public function getMap(User $user) : StdClass
     {
         return $this->getTable($user)->getMap();
     }
 
-    public function getLevel(User $user, $scope, $action)
+    /**
+     * Get an access level for a specific scope and action.
+     */
+    public function getLevel(User $user, string $scope, string $action) : string
     {
         if ($user->isAdmin()) {
             return $this->getTable($user)->getHighestLevel($scope, $action);
         }
+
         return $this->getTable($user)->getLevel($scope, $action);
     }
 
-    public function get(User $user, $permission)
+    /**
+     * Get a permission. E.g. 'assignment' permission.
+     */
+    public function get(User $user, string $permission) : ?string
     {
+        if (substr($permission, -10) !== 'Permission') {
+            $permission .= 'Permission';
+        }
+
         return $this->getTable($user)->get($permission);
     }
 
-    public function checkReadNo(User $user, $scope)
+    /**
+     * Whether there's no 'read' access for a specific scope.
+     */
+    public function checkReadNo(User $user, string $scope) : bool
     {
         if ($user->isAdmin()) {
             return false;
         }
+
         $data = $this->getTable($user)->getScopeData($scope);
-        return $this->getImplementation($scope)->checkReadNo($user, $data);
+
+        return (bool) $this->getImplementation($scope)->checkReadNo($user, $data);
     }
 
-    public function checkReadOnlyTeam(User $user, $scope)
+    /**
+     * Whether 'read' access is set to 'team' for a specific scope.
+     */
+    public function checkReadOnlyTeam(User $user, string $scope) : bool
     {
         if ($user->isAdmin()) {
             return false;
         }
+
         $data = $this->getTable($user)->getScopeData($scope);
-        return $this->getImplementation($scope)->checkReadOnlyTeam($user, $data);
+
+        return (bool) $this->getImplementation($scope)->checkReadOnlyTeam($user, $data);
     }
 
-    public function checkReadOnlyOwn(User $user, $scope)
+    /**
+     * Whether 'read' access is set to 'own' for a specific scope.
+     */
+    public function checkReadOnlyOwn(User $user, string $scope) : bool
     {
         if ($user->isAdmin()) {
             return false;
         }
+
         $data = $this->getTable($user)->getScopeData($scope);
-        return $this->getImplementation($scope)->checkReadOnlyOwn($user, $data);
+
+        return (bool) $this->getImplementation($scope)->checkReadOnlyOwn($user, $data);
     }
 
-    public function check(User $user, $subject, $action = null)
+    /**
+     * Check a scope or entity. If $action is omitted, it will check whether a scope level is set to 'enabled'.
+     */
+    public function check(User $user, $subject, ?string $action = null) : bool
     {
         if (is_string($subject)) {
             return $this->checkScope($user, $subject, $action);
-        } else {
-            $entity = $subject;
-            if ($entity instanceof Entity) {
-                return $this->checkEntity($user, $entity, $action);
-            }
         }
+
+        $entity = $subject;
+
+        if ($entity instanceof Entity) {
+            $action = $action ?? 'read';
+
+            return $this->checkEntity($user, $entity, $action);
+        }
+
+        return false;
     }
 
-    public function checkEntity(User $user, Entity $entity, $action = 'read')
+    /**
+     * Check access to a specific entity (record).
+     */
+    public function checkEntity(User $user, Entity $entity, string $action = 'read') : bool
     {
         $scope = $entity->getEntityType();
 
@@ -197,60 +231,79 @@ class AclManager
 
         if ($action) {
             $methodName = 'checkEntity' . ucfirst($action);
+
             if (method_exists($impl, $methodName)) {
-                return $impl->$methodName($user, $entity, $data);
+                return (bool) $impl->$methodName($user, $entity, $data);
             }
         }
 
-        return $impl->checkEntity($user, $entity, $data, $action);
+        return (bool) $impl->checkEntity($user, $entity, $data, $action);
     }
 
-    public function checkIsOwner(User $user, Entity $entity)
+    /**
+     * Whether a user is owned of an entity (record). Usually 'assignedUser' field is used for checking.
+     */
+    public function checkIsOwner(User $user, Entity $entity) : bool
     {
-        return $this->getImplementation($entity->getEntityType())->checkIsOwner($user, $entity);
+        return (bool) $this->getImplementation($entity->getEntityType())->checkIsOwner($user, $entity);
     }
 
-    public function checkInTeam(User $user, Entity $entity)
+    /**
+     * Whether a user team list overlaps with teams set in an entity.
+     */
+    public function checkInTeam(User $user, Entity $entity) : bool
     {
-        return $this->getImplementation($entity->getEntityType())->checkInTeam($user, $entity);
+        return (bool) $this->getImplementation($entity->getEntityType())->checkInTeam($user, $entity);
     }
 
-    public function checkScope(User $user, $scope, $action = null)
+    /**
+     * Check access to scope. If $action is omitted, it will check whether a scope level is set to 'enabled'.
+     */
+    public function checkScope(User $user, string $scope, ?string $action = null) : bool
     {
         $data = $this->getTable($user)->getScopeData($scope);
-        return $this->getImplementation($scope)->checkScope($user, $data, $action);
+
+        return (bool) $this->getImplementation($scope)->checkScope($user, $data, $action);
     }
 
-    public function checkUser(User $user, $permission, User $entity)
+    /**
+     * @deprecated Use checkUserPermission instead.
+     */
+    public function checkUser(User $user, string $permission, User $target) : bool
     {
         if ($user->isAdmin()) {
             return true;
         }
+
         if ($this->get($user, $permission) === 'no') {
-            if ($entity->id !== $user->id) {
+            if ($target->id !== $user->id) {
                 return false;
             }
         } else if ($this->get($user, $permission) === 'team') {
-            if ($entity->id != $user->id) {
+            if ($target->id != $user->id) {
                 $teamIdList1 = $user->getTeamIdList();
-                $teamIdList2 = $entity->getTeamIdList();
+                $teamIdList2 = $target->getTeamIdList();
 
                 $inTeam = false;
+
                 foreach ($teamIdList1 as $id) {
                     if (in_array($id, $teamIdList2)) {
                         $inTeam = true;
+
                         break;
                     }
                 }
+
                 if (!$inTeam) {
                     return false;
                 }
             }
         }
+
         return true;
     }
 
-    protected function getGlobalRestrictionTypeList(User $user, $action = 'read')
+    protected function getGlobalRestrictionTypeList(User $user, string $action = 'read') : array
     {
         $typeList = ['forbidden'];
 
@@ -264,6 +317,7 @@ class AclManager
 
         if ($action === 'edit') {
             $typeList[] = 'readOnly';
+
             if (!$user->isAdmin()) {
                 $typeList[] = 'nonAdminReadOnly';
             }
@@ -272,8 +326,12 @@ class AclManager
         return $typeList;
     }
 
-    public function getScopeForbiddenAttributeList(User $user, $scope, $action = 'read', $thresholdLevel = 'no')
-    {
+    /**
+     * Get attributes forbidden for a user.
+     */
+    public function getScopeForbiddenAttributeList(
+        User $user, string $scope, string $action = 'read', string $thresholdLevel = 'no'
+    ) : array {
         $list = [];
 
         if (!$user->isAdmin()) {
@@ -285,14 +343,19 @@ class AclManager
                 $list,
                 $this->getScopeRestrictedAttributeList($scope, $this->getGlobalRestrictionTypeList($user, $action))
             );
+
             $list = array_values($list);
         }
 
         return $list;
     }
 
-    public function getScopeForbiddenFieldList(User $user, $scope, $action = 'read', $thresholdLevel = 'no')
-    {
+    /**
+     * Get fields forbidden for a user.
+     */
+    public function getScopeForbiddenFieldList(
+        User $user, string $scope, string $action = 'read', string $thresholdLevel = 'no'
+    ) : array {
         $list = [];
 
         if (!$user->isAdmin()) {
@@ -304,15 +367,19 @@ class AclManager
                 $list,
                 $this->getScopeRestrictedFieldList($scope, $this->getGlobalRestrictionTypeList($user, $action))
             );
+
             $list = array_values($list);
         }
 
         return $list;
     }
 
-
-    public function getScopeForbiddenLinkList(User $user, $scope, $action = 'read', $thresholdLevel = 'no')
-    {
+    /**
+     * Get links forbidden for a user.
+     */
+    public function getScopeForbiddenLinkList(
+        User $user, string $scope, string $action = 'read', string $thresholdLevel = 'no'
+    ) : array {
         $list = [];
 
         if ($thresholdLevel === 'no') {
@@ -320,13 +387,19 @@ class AclManager
                 $list,
                 $this->getScopeRestrictedLinkList($scope, $this->getGlobalRestrictionTypeList($user, $action))
             );
+
             $list = array_values($list);
         }
 
         return $list;
     }
 
-    public function checkUserPermission(User $user, $target, $permissionType = 'userPermission')
+    /**
+     * Whether a user has an access to another user over a specific permission.
+     *
+     * @param $target User|string User entity or user ID.
+     */
+    public function checkUserPermission(User $user, $target, string $permissionType = 'user') : bool
     {
         $permission = $this->get($user, $permissionType);
 
@@ -348,7 +421,8 @@ class AclManager
 
         if ($permission === 'team') {
             $teamIdList = $user->getLinkMultipleIdList('teams');
-            if (!$this->getContainer()->get('entityManager')->getRepository('User')->checkBelongsToAnyOfTeams($userId, $teamIdList)) {
+
+            if (!$this->entityManager->getRepository('User')->checkBelongsToAnyOfTeams($userId, $teamIdList)) {
                 return false;
             }
         }
@@ -356,57 +430,77 @@ class AclManager
         return true;
     }
 
-    public function checkAssignmentPermission(User $user, $target)
+    /**
+     * Whether a user can assign to another user.
+     *
+     * @param $target User|string User entity or user ID.
+     */
+    public function checkAssignmentPermission(User $user, $target) : bool
     {
-        return $this->checkUserPermission($user, $target, 'assignmentPermission');
+        return $this->checkUserPermission($user, $target, 'assignment');
     }
 
-    public function createUserAcl(User $user)
+    /**
+     * Create a wrapper for a specific user.
+     */
+    public function createUserAcl(User $user) : UserAclWrapper
     {
         $className = $this->userAclClassName;
         $acl = new $className($this, $user);
+
         return $acl;
     }
 
-    public function getScopeRestrictedFieldList($scope, $type)
+    public function getScopeRestrictedFieldList(string $scope, $type) : array
     {
         if (is_array($type)) {
             $typeList = $type;
             $list = [];
+
             foreach ($typeList as $type) {
                 $list = array_merge($list, $this->globalRestricton->getScopeRestrictedFieldList($scope, $type));
             }
+
             $list = array_values($list);
+
             return $list;
         }
         return $this->globalRestricton->getScopeRestrictedFieldList($scope, $type);
     }
 
-    public function getScopeRestrictedAttributeList($scope, $type)
+    public function getScopeRestrictedAttributeList(string $scope, $type) : array
     {
         if (is_array($type)) {
             $typeList = $type;
             $list = [];
+
             foreach ($typeList as $type) {
                 $list = array_merge($list, $this->globalRestricton->getScopeRestrictedAttributeList($scope, $type));
             }
+
             $list = array_values($list);
+
             return $list;
         }
+
         return $this->globalRestricton->getScopeRestrictedAttributeList($scope, $type);
     }
 
-    public function getScopeRestrictedLinkList($scope, $type)
+    public function getScopeRestrictedLinkList(string $scope, $type) : array
     {
         if (is_array($type)) {
             $typeList = $type;
             $list = [];
+
             foreach ($typeList as $type) {
                 $list = array_merge($list, $this->globalRestricton->getScopeRestrictedLinkList($scope, $type));
             }
+
             $list = array_values($list);
+
             return $list;
         }
+
         return $this->globalRestricton->getScopeRestrictedLinkList($scope, $type);
     }
 }

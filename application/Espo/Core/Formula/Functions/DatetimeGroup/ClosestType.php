@@ -29,46 +29,44 @@
 
 namespace Espo\Core\Formula\Functions\DateTimeGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Di;
 
-class ClosestType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
+
+use DateTime;
+use DateTimeZone;
+
+class ClosestType extends BaseFunction implements Di\ConfigAware
 {
-    protected function init()
+    use Di\ConfigSetter;
+
+    public function process(ArgumentList $args)
     {
-        $this->addDependency('dateTime');
-        $this->addDependency('config');
-    }
+        $args = $this->evaluate($args);
 
-    public function process(\StdClass $item)
-    {
-        if (!property_exists($item, 'value')) {
-            return true;
+        if (count($args) < 3) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
-
-        if (count($item->value) < 3) {
-             throw new Error();
-        }
-
-        $value = $this->evaluate($item->value[0]);
-        $type = $this->evaluate($item->value[1]);
-        $target = $this->evaluate($item->value[2]);
+        $value = $args[0];
+        $type = $args[1];
+        $target = $args[2];
 
         if (!in_array($type, ['time', 'minute', 'hour', 'date', 'dayOfWeek', 'month'])) {
-            throw new Error('Bad TYPE passed to datetime\\closest function.');
+            $this->throwBadArgumentType(1);
         }
 
         $inPast = false;
-        if (count($item->value) > 3) {
-            $inPast = $this->evaluate($item->value[3]);
+        if (count($args) > 3) {
+            $inPast = $args[3];
         }
 
         $timezone = null;
-        if (count($item->value) > 4) {
-            $timezone = $this->evaluate($item->value[4]);
+        if (count($args) > 4) {
+            $timezone = $args[4];
         }
 
         if (!$value) {
@@ -76,11 +74,11 @@ class ClosestType extends \Espo\Core\Formula\Functions\Base
         }
 
         if (!is_string($value)) {
-            throw new Error('Bad VALUE passed to datetime\\closest function.');
+            $this->throwBadArgumentType(1, 'string');
         }
 
         if (!$timezone) {
-            $timezone = $this->getInjection('config')->get('timeZone');
+            $timezone = $this->config->get('timeZone');
         }
 
         $isDate = false;
@@ -95,12 +93,12 @@ class ClosestType extends \Espo\Core\Formula\Functions\Base
 
         $format = 'Y-m-d H:i:s';
 
-        $dt = \DateTime::createFromFormat($format, $value, new \DateTimeZone($timezone));
+        $dt = DateTime::createFromFormat($format, $value, new DateTimeZone($timezone));
         $valueTimestamp = $dt->getTimestamp();
 
         if ($type === 'time') {
             if (!is_string($target)) {
-                throw new Error('Bad TARGET passed to datetime\\closest function.');
+                $this->throwBadArgumentType(3, 'string');
             }
             list($hour, $minute) = explode(':', $target);
             if (!$hour) {
@@ -219,7 +217,7 @@ class ClosestType extends \Espo\Core\Formula\Functions\Base
         }
 
         if (!$isDate) {
-            $dt->setTimezone(new \DateTimeZone('UTC'));
+            $dt->setTimezone(new DateTimeZone('UTC'));
             return $dt->format('Y-m-d H:i');
         } else {
             return $dt->format('Y-m-d');

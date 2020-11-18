@@ -29,29 +29,26 @@
 
 namespace Espo\Core\Formula\Functions\StringGroup;
 
-use \Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class SubstringType extends \Espo\Core\Formula\Functions\Base
+class SubstringType extends BaseFunction
 {
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        if (!property_exists($item, 'value')) {
-            throw new Error();
+        $args = $this->evaluate($args);
+
+        if (count($args) < 2) {
+            $this->throwTooFewArguments();
         }
 
-        if (!is_array($item->value)) {
-            throw new Error();
-        }
+        $string = $args[0];
+        $start = $args[1];
 
-        if (count($item->value) < 2) {
-            throw new Error();
-        }
-
-        $string = $this->evaluate($item->value[0]);
-        $start = $this->evaluate($item->value[1]);
-
-        if (count($item->value) > 2) {
-            $length = $this->evaluate($item->value[2]);
+        if (count($args) > 2) {
+            $length = $args[2];
             return mb_substr($string, $start, $length);
         } else {
             return mb_substr($string, $start);

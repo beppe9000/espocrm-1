@@ -29,20 +29,25 @@
 
 namespace Espo\Core\Formula\Functions\RecordGroup;
 
-use Espo\Core\Exceptions\Error;
+use Espo\Core\Formula\{
+    Functions\BaseFunction,
+    ArgumentList,
+};
 
-class UpdateRelationColumnType extends \Espo\Core\Formula\Functions\Base
+use Espo\Core\Di;
+
+class UpdateRelationColumnType extends BaseFunction implements
+    Di\EntityManagerAware
 {
-    protected function init()
-    {
-        $this->addDependency('entityManager');
-    }
+    use Di\EntityManagerSetter;
 
-    public function process(\StdClass $item)
+    public function process(ArgumentList $args)
     {
-        $args = $this->fetchArguments($item);
+        $args = $this->evaluate($args);
 
-        if (count($args) < 6) throw new Error("Formula: record\\updateRelationColumn: Not enough arguments.");
+        if (count($args) < 6) {
+            $this->throwTooFewArguments(6);
+        }
 
         $entityType = $args[0];
         $id = $args[1];
@@ -51,18 +56,20 @@ class UpdateRelationColumnType extends \Espo\Core\Formula\Functions\Base
         $column = $args[4];
         $value = $args[5];
 
-        if (!$entityType) throw new Error("Formula record\\updateRelationColumn: Empty entityType.");
+        if (!$entityType) $this->throwError("Empty entityType.");
         if (!$id) return null;
-        if (!$link) throw new Error("Formula record\\updateRelationColumn: Empty link.");
+        if (!$link) $this->throwError("Empty link.");
         if (!$foreignId) return null;
-        if (!$column) throw new Error("Formula record\\updateRelationColumn: Empty column.");
+        if (!$column) $this->throwError("Empty column.");
 
-        $em = $this->getInjection('entityManager');
+        $em = $this->entityManager;
 
-        if (!$em->hasRepository($entityType))
-            throw new Error("Formula: record\\updateRelationColumn: Repository does not exist.");
+        if (!$em->hasRepository($entityType)) {
+            $this->throwError("Repository does not exist.");
+        }
 
         $entity = $em->getEntity($entityType, $id);
+
         if (!$entity) return null;
 
         return $em->getRepository($entityType)->updateRelation($entity, $link, $foreignId, [$column => $value]);

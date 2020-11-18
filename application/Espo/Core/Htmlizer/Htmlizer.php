@@ -39,9 +39,16 @@ use Espo\Core\Utils\Config;
 use Espo\Core\Utils\Language;
 use Espo\Core\Utils\Metadata;
 use Espo\ORM\EntityManager;
+use Espo\ORM\Collection;
+use Espo\Core\ServiceFactory;
+use Espo\Core\Acl;
 
 use LightnCandy\LightnCandy as LightnCandy;
 
+/**
+ * Generates an HTML for an entity.
+ * Used by a Print-to-PDF, system email notifications.
+ */
 class Htmlizer
 {
     protected $fileManager;
@@ -51,18 +58,19 @@ class Htmlizer
     protected $entityManager;
     protected $metadata;
     protected $language;
+    protected $serviceFactory;
 
     public function __construct(
         FileManager $fileManager,
         DateTime $dateTime,
         NumberUtil $number,
-        $acl = null,
+        ?Acl $acl = null,
         ?EntityManager $entityManager = null,
         ?Metadata $metadata = null,
         ?Language $language = null,
-        ?Config $config = null
-    )
-    {
+        ?Config $config = null,
+        ?ServiceFactory $serviceFactory = null
+    ) {
         $this->fileManager = $fileManager;
         $this->dateTime = $dateTime;
         $this->number = $number;
@@ -71,21 +79,7 @@ class Htmlizer
         $this->metadata = $metadata;
         $this->language = $language;
         $this->config = $config;
-    }
-
-    protected function getAcl()
-    {
-        return $this->acl;
-    }
-
-    protected function getEntityManager()
-    {
-        return $this->entityManager;
-    }
-
-    protected function getMetadata()
-    {
-        return $this->metadata;
+        $this->serviceFactory = $serviceFactory;
     }
 
     protected function format($value)
@@ -111,26 +105,32 @@ class Htmlizer
         $skipAttributeList = [];
         $forbiddenLinkList = [];
 
-        if ($this->getAcl()) {
-            $forbiddenAttributeList = $this->getAcl()->getScopeForbiddenAttributeList($entity->getEntityType(), 'read');
+        if ($this->acl) {
+            $forbiddenAttributeList = $this->acl->getScopeForbiddenAttributeList($entity->getEntityType(), 'read');
 
             $forbiddenAttributeList = array_merge(
                 $forbiddenAttributeList,
-                $this->getAcl()->getScopeRestrictedAttributeList($entity->getEntityType(), ['forbidden', 'internal', 'onlyAdmin'])
+                $this->acl->getScopeRestrictedAttributeList($entity->getEntityType(), ['forbidden', 'internal', 'onlyAdmin'])
             );
 
-            $forbiddenLinkList = $this->getAcl()->getScopeRestrictedLinkList($entity->getEntityType(), ['forbidden', 'internal', 'onlyAdmin']);
+            $forbiddenLinkList = $this->acl->getScopeRestrictedLinkList(
+                $entity->getEntityType(), ['forbidden', 'internal', 'onlyAdmin']
+            );
         }
 
         $relationList = $entity->getRelationList();
 
-        if (!$skipLinks && $level === 0) {
+        if (!$skipLinks && $level === 0 && $this->entityManager && $entity->id) {
             foreach ($relationList as $relation) {
                 $collection = null;
 
                 if ($entity->hasLinkMultipleField($relation)) {
                     $toLoad = true;
-                    $collection = $entity->getLinkCollection($relation);
+
+                    $collection = $this->entityManager
+                        ->getRepository($entity->getEntityType())
+                        ->getRelation($entity, $relation)
+                        ->find();
                 } else {
                     if (
                         $template && $entity->getRelationType($relation, ['hasMany', 'manyMany', 'hasChildren']) &&
@@ -140,7 +140,12 @@ class Htmlizer
                         if ($this->config) {
                             $limit = $this->config->get('htmlizerLinkLimit') ?? $limit;
                         }
-                        $collection = $entity->getLinkCollection($relation, ['limit' => $limit]);
+
+                        $collection = $this->entityManager
+                            ->getRepository($entity->getEntityType())
+                            ->getRelation($entity, $relation)
+                            ->limit(0, $limit)
+                            ->find();
                     }
                 }
 
@@ -151,7 +156,7 @@ class Htmlizer
         }
 
         foreach ($data as $key => $value) {
-            if ($value instanceof \Espo\ORM\ICollection) {
+            if ($value instanceof Collection) {
                 $skipAttributeList[] = $key;
                 $collection = $value;
                 $list = [];
@@ -224,7 +229,8 @@ class Htmlizer
 
             if ($fieldType === 'currency' && $this->metadata) {
                 if ($entity->getAttributeParam($attribute, 'attributeRole') === 'currency') {
-                    if ($currencyValue = $data[$attribute]) {
+                    $currencyValue = $data[$attribute] ?? null;
+                    if ($currencyValue) {
                         $data[$attribute . 'Symbol'] = $this->metadata->get(['app', 'currency', 'symbolMap', $currencyValue]);
                     }
                 }
@@ -237,9 +243,12 @@ class Htmlizer
                     $data[$keyRaw] = $data[$attribute];
 
                 $fieldType = $this->getFieldType($entity->getEntityType(), $attribute);
+
                 if ($fieldType === 'enum') {
                     if ($this->language) {
-                        $data[$attribute] = $this->language->translateOption($data[$attribute], $attribute, $entity->getEntityType());
+                        $data[$attribute] = $this->language->translateOption(
+                            $data[$attribute], $attribute, $entity->getEntityType()
+                        );
                     }
                 }
 
@@ -248,18 +257,33 @@ class Htmlizer
         }
 
         if (!$skipLinks) {
+
             $relationDefs = $entity->getRelations();
+
             foreach ($entity->getRelationList() as $relation) {
-                if (in_array($relation, $forbiddenLinkList)) continue;
+                if (in_array($relation, $forbiddenLinkList)) {
+                    continue;
+                }
+
+                $relationType = $entity->getRelationType($relation);
+
                 if (
-                    !empty($relationDefs[$relation]['type'])
-                    &&
-                    ($entity->getRelationType($relation) === 'belongsTo' || $entity->getRelationType($relation) === 'belongsToParent')
+                    $relationType === 'belongsTo' ||
+                    $relationType === 'belongsToParent'
                 ) {
-                    $relatedEntity = $entity->get($relation);
-                    if (!$relatedEntity) continue;
-                    if ($this->getAcl()) {
-                        if (!$this->getAcl()->check($relatedEntity, 'read')) continue;
+                    $relatedEntity = $this->entityManager
+                        ->getRepository($entity->getEntityType())
+                        ->getRelation($entity, $relation)
+                        ->findOne();
+
+                    if (!$relatedEntity) {
+                        continue;
+                    }
+
+                    if ($this->acl) {
+                        if (!$this->acl->check($relatedEntity, 'read')) {
+                            continue;
+                        }
                     }
 
                     $data[$relation] = $this->getDataFromEntity($relatedEntity, true, $level + 1);
@@ -446,6 +470,16 @@ class Htmlizer
                     return $context['inverse'] ? $context['inverse']() : '';
                 }
             },
+            'ifMultipleOf' => function () {
+                $args = func_get_args();
+                $context = $args[count($args) - 1];
+
+                if ($args[0] % $args[1] === 0) {
+                    return $context['fn']();
+                } else {
+                    return $context['inverse'] ? $context['inverse']() : '';
+                }
+            },
             'tableTag' => function () {
                 $args = func_get_args();
                 $context = $args[count($args) - 1];
@@ -531,8 +565,16 @@ class Htmlizer
         return $helpers;
     }
 
-    public function render(Entity $entity, $template, $id = null, $additionalData = [], $skipLinks = false)
-    {
+    /**
+     * Generate an HTML for entity by a given template.
+     *
+     * @param $cacheId @deprecated Skip or specify NULL.
+     * @param $additionalData Data will be passed to the template.
+     * @param $skipLinks Do not process related records.
+     */
+    public function render(
+        Entity $entity, string $template, ?string $cacheId = null, ?array $additionalData = null, bool $skipLinks = false
+    ) : string {
         $template = str_replace('<tcpdf ', '', $template);
 
         $helpers = $this->getHelpers();
@@ -556,26 +598,31 @@ class Htmlizer
             $data['now_RAW'] = date('Y-m-d H:i:s');
         }
 
+        $additionalData = $additionalData ?? [];
+
         foreach ($additionalData as $k => $value) {
             $data[$k] = $value;
         }
 
+        $data['__config'] = $this->config;
         $data['__dateTime'] = $this->dateTime;
         $data['__metadata'] = $this->metadata;
         $data['__entityManager'] = $this->entityManager;
         $data['__language'] = $this->language;
+        $data['__serviceFactory'] = $this->serviceFactory;
+        $data['__entityType'] = $entity->getEntityType();
 
         $html = $renderer($data);
 
         $html = str_replace('?entryPoint=attachment&amp;', '?entryPoint=attachment&', $html);
 
-        if ($this->getEntityManager()) {
+        if ($this->entityManager) {
             $html = preg_replace_callback('/\?entryPoint=attachment\&id=([A-Za-z0-9]*)/', function ($matches) {
                 $id = $matches[1];
-                $attachment = $this->getEntityManager()->getEntity('Attachment', $id);
+                $attachment = $this->entityManager->getEntity('Attachment', $id);
 
                 if ($attachment) {
-                    $filePath = $this->getEntityManager()->getRepository('Attachment')->getFilePath($attachment);
+                    $filePath = $this->entityManager->getRepository('Attachment')->getFilePath($attachment);
                     return $filePath;
                 }
             }, $html);
@@ -584,8 +631,9 @@ class Htmlizer
         return $html;
     }
 
-    protected function getFieldType($entityType, $field) {
-        if (!$this->metadata) return;
+    protected function getFieldType(string $entityType, string $field)
+    {
+        if (!$this->metadata) return null;
         return $this->metadata->get(['entityDefs', $entityType, 'fields', $field, 'type']);
     }
 }

@@ -37,7 +37,7 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
 
     protected $objects;
 
-    protected $filesPath= 'tests/unit/testData/FileManager';
+    protected $filesPath = 'tests/unit/testData/FileManager';
     protected $cachePath = 'tests/unit/testData/cache/FileManager';
 
     protected $reflection;
@@ -69,29 +69,26 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
 
     public function testGetContents()
     {
-        $result = file_get_contents($this->filesPath.'/getContent/test.json');
+        $result = file_get_contents($this->filesPath . '/getContent/test.json');
         $this->assertEquals($result, $this->object->getContents( array($this->filesPath, 'getContent/test.json') ));
     }
 
     public function testPutContents()
     {
-        $testPath= $this->filesPath.'/setContent';
+        $testPath = $this->cachePath;
 
         $result= 'next value';
-        $this->assertTrue($this->object->putContents(array($testPath, 'test.json'), $result));
+        $this->assertTrue($this->object->putContents(array($testPath, 'setContent.json'), $result));
 
-        $this->assertEquals($result, $this->object->getContents( array($testPath, 'test.json')) );
-
-        $this->assertTrue($this->object->putContents(array($testPath, 'test.json'), 'initial value'));
+        $this->assertEquals($result, $this->object->getContents( array($testPath, 'setContent.json')) );
+        @unlink($testPath . '/setContent.json');
     }
 
     public function testConcatPaths()
     {
         $input = Util::fixPath('application/Espo/Resources/metadata/app/panel.json');
         $result = Util::fixPath('application/Espo/Resources/metadata/app/panel.json');
-
         $this->assertEquals($result, $this->reflection->invokeMethod('concatPaths', array($input)) );
-
 
         $input = array(
             'application',
@@ -100,25 +97,20 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
             'panel.json',
         );
         $result = Util::fixPath('application/Espo/Resources/metadata/app/panel.json');
-
         $this->assertEquals($result, $this->reflection->invokeMethod('concatPaths', array($input)) );
-
 
         $input = array(
             'application/Espo/Resources/metadata/app',
             'panel.json',
         );
         $result = Util::fixPath('application/Espo/Resources/metadata/app/panel.json');
-
         $this->assertEquals($result, $this->reflection->invokeMethod('concatPaths', array($input)) );
-
 
         $input = array(
             'application/Espo/Resources/metadata/app/',
             'panel.json',
         );
         $result = Util::fixPath('application/Espo/Resources/metadata/app/panel.json');
-
         $this->assertEquals($result, $this->reflection->invokeMethod('concatPaths', array($input)) );
     }
 
@@ -149,7 +141,7 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
         $result = 'logs';
         $this->assertEquals($result, $this->object->getDirName($input, false));
 
-        $input = 'tests/unit/testData/FileManager/getContent';
+        $input = $this->filesPath . '/getContent';
         $result = 'getContent';
         $this->assertEquals($result, $this->object->getDirName($input, false));
     }
@@ -181,14 +173,14 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
         $result = 'notRealPath/logs';
         $this->assertEquals($result, $this->object->getDirName($input));
 
-        $input = 'tests/unit/testData/FileManager/getContent';
-        $result = 'tests/unit/testData/FileManager/getContent';
+        $input = $this->filesPath . '/getContent';
+        $result = $this->filesPath . '/getContent';
         $this->assertEquals($result, $this->object->getDirName($input, true));
     }
 
     public function testUnsetContents()
     {
-        $testPath = $this->filesPath.'/unsets/test.json';
+        $testPath = $this->cachePath.'/unsets.json';
 
         $initData = '{"fields":{"someName":{"type":"varchar","maxLength":40},"someName2":{"type":"varchar","maxLength":36}}}';
         $this->object->putContents($testPath, $initData);
@@ -236,8 +228,8 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
         $result = 'notRealPath/logs';
         $this->assertEquals($result, $this->object->getParentDirName($input));
 
-        $input = 'tests/unit/testData/FileManager/getContent';
-        $result = 'tests/unit/testData/FileManager';
+        $input = $this->filesPath . '/getContent';
+        $result = $this->filesPath;
         $this->assertEquals($result, $this->object->getParentDirName($input, true));
     }
 
@@ -300,9 +292,10 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
         );
 
         $result = array (
-            Util::fixPath('custom/Espo/Custom/Modules/ExtensionTest/File.json'),
-            Util::fixPath('custom/Espo/Custom/Modules/ExtensionTest/File.php'),
+            'custom/Espo/Custom/Modules/ExtensionTest/File.json',
+            'custom/Espo/Custom/Modules/ExtensionTest/File.php',
         );
+        $result = array_map('\Espo\Core\Utils\Util::fixPath', $result);
 
         $this->assertEquals($result, $this->reflection->invokeMethod('getSingeFileList', array($input, true)));
     }
@@ -379,14 +372,15 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
      */
     public function testRemoveWithEmptyDirs($name, $result)
     {
-        $path = 'tests/unit/testData/FileManager/Remove/' . $name;
-        $cachePath = $this->cachePath . '/' . $name;
+        $path = Util::fixPath($this->filesPath . '/Remove/' . $name);
+        $cachePath = Util::fixPath($this->cachePath . '/' . $name);
+        $result = array_map('\Espo\Core\Utils\Util::fixPath', $result);
 
         $fileList = array (
             $cachePath . '/custom/Espo/Custom/Modules/ExtensionTest/File.json',
             $cachePath . '/custom/Espo/Custom/Modules/ExtensionTest/File.php',
         );
-        $result = array_map('\Espo\Core\Utils\Util::fixPath', $result);
+        $fileList = array_map('\Espo\Core\Utils\Util::fixPath', $fileList);
 
         $res = $this->object->copy($path, $cachePath, true);
         if ($res) {
@@ -411,19 +405,20 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
      */
     public function testGetExistsPath($input, $result)
     {
-        $this->assertEquals($result, $this->reflection->invokeMethod('getExistsPath', array($input)) );
+        $this->assertEquals(Util::fixPath($result), $this->reflection->invokeMethod('getExistsPath', array($input)) );
     }
 
     public function testCopyTestCase1()
     {
-        $path = 'tests/unit/testData/FileManager/copy/testCase1';
-        $cachePath = $this->cachePath . '/copy/testCase1';
+        $path = Util::fixPath($this->filesPath . '/copy/testCase1');
+        $cachePath = Util::fixPath($this->cachePath . '/copy/testCase1');
 
         $expectedResult = [
             'custom/Espo/Custom/Modules/ExtensionTest/File.json',
             'custom/Espo/Custom/Modules/ExtensionTest/File.php',
             'custom/Espo/Custom/Modules/TestModule/SubFolder/Tester.txt',
         ];
+        $expectedResult = array_map('\Espo\Core\Utils\Util::fixPath', $expectedResult);
 
         $result = $this->object->copy($path, $cachePath, true);
 
@@ -435,8 +430,8 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
 
     public function testCopyTestCase2()
     {
-        $path = 'tests/unit/testData/FileManager/copy/testCase2';
-        $cachePath = $this->cachePath . '/copy/testCase2';
+        $path = Util::fixPath($this->filesPath . '/copy/testCase2');
+        $cachePath = Util::fixPath($this->cachePath . '/copy/testCase2');
 
         $expectedResult = [
             'custom/Espo/Custom/test1.php',
@@ -444,6 +439,7 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
             'data/upload/5a86d9bf1154968dc',
             'test0.php'
         ];
+        $expectedResult = array_map('\Espo\Core\Utils\Util::fixPath', $expectedResult);
 
         $result = $this->object->copy($path, $cachePath, true);
 
@@ -455,8 +451,8 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
 
     public function testCopyTestCase3()
     {
-        $path = 'tests/unit/testData/FileManager/copy/testCase3';
-        $cachePath = $this->cachePath . '/copy/testCase3';
+        $path = Util::fixPath($this->filesPath . '/copy/testCase3');
+        $cachePath = Util::fixPath($this->cachePath . '/copy/testCase3');
 
         $expectedResult = [
             'custom/Espo/Custom/test1.php',
@@ -464,6 +460,7 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
             'data/upload/5a86d9bf1154968dc',
             'test0.php'
         ];
+        $expectedResult = array_map('\Espo\Core\Utils\Util::fixPath', $expectedResult);
 
         $fileList = $this->object->getFileList($path, true, '', true, true);
 
@@ -479,8 +476,8 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
 
     public function testCopyTestCase4()
     {
-        $path = 'tests/unit/testData/FileManager/copy/testCase4';
-        $cachePath = $this->cachePath . '/copy/testCase4';
+        $path = Util::fixPath($this->filesPath . '/copy/testCase4');
+        $cachePath = Util::fixPath($this->cachePath . '/copy/testCase4');
 
         $expectedResult = [
             'custom',
@@ -493,6 +490,7 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
             'data/upload/5a86d9bf1154968dc',
             'test0.php'
         ];
+        $expectedResult = array_map('\Espo\Core\Utils\Util::fixPath', $expectedResult);
 
         $fileList = $this->object->getFileList($path, true, '', null, true);
 
@@ -506,4 +504,32 @@ class ManagerTest extends \PHPUnit\Framework\TestCase
         }
     }
 
+    public function relativePathData()
+    {
+        $tmpPath = $this->cachePath;
+        $tmpFile = tempnam($tmpPath, 'tmp');
+
+        $data = [
+            ['data/config.php', 'data/config.php'],
+            [realpath('data/config.php'), 'data/config.php'],
+            [$tmpFile, $tmpPath . '/' . basename($tmpFile)],
+            [realpath('application/Espo/Core'), 'application/Espo/Core'],
+            [realpath('application/Espo/Core') . '/', 'application/Espo/Core/'],
+            [realpath('application/Espo/Core/Application.php'), 'application/Espo/Core/Application.php'],
+            ['C:\\espocrm\\data\\config.php', 'data\\config.php', 'C:\\espocrm', '\\'],
+            ['C:espocrm\\data\\config.php', 'data\\config.php', 'C:espocrm', '\\'],
+            ['C:\\espocrm\\data\\tmp\\' . basename($tmpFile), 'data\\tmp\\' . basename($tmpFile), 'C:\\espocrm', '\\'],
+        ];
+        @unlink($tmpFile);
+
+        return $data;
+    }
+
+    /**
+     * @dataProvider relativePathData
+     */
+    public function testGetRelativePath($path, $expectedResult, $basePath = null, $dirSeparator = null)
+    {
+        $this->assertEquals(Util::fixPath($expectedResult), $this->object->getRelativePath($path, $basePath, $dirSeparator));
+    }
 }

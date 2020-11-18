@@ -29,7 +29,18 @@
 
 namespace Espo\ORM;
 
-class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \SeekableIterator, ICollection
+use Iterator;
+use Countable;
+use ArrayAccess;
+use SeekableIterator;
+use RuntimeException;
+use OutOfBoundsException;
+use InvalidArgumentException;
+
+/**
+ * A standard collection of entities. It allocates a memory for all entities.
+ */
+class EntityCollection implements Collection, Iterator, Countable, ArrayAccess, SeekableIterator
 {
     private $entityFactory = null;
 
@@ -71,7 +82,9 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
     {
         do {
             $this->position ++;
+
             $next = false;
+
             if (!$this->valid() && $this->position <= $this->getLastValidKey()) {
                 $next = true;
             }
@@ -81,13 +94,17 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
     private function getLastValidKey()
     {
         $keys = array_keys($this->dataList);
+
         $i = end($keys);
+
         while ($i > 0) {
             if (isset($this->dataList[$i])) {
                 break;
             }
+
             $i--;
         }
+
         return $i;
     }
 
@@ -106,20 +123,23 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
         if (!isset($this->dataList[$offset])) {
             return null;
         }
+
         return $this->getEntityByOffset($offset);
     }
 
     public function offsetSet($offset, $value)
     {
         if (!($value instanceof Entity)) {
-            throw new \InvalidArgumentException('Only Entity is allowed to be added to EntityCollection.');
+            throw new InvalidArgumentException('Only Entity is allowed to be added to EntityCollection.');
         }
 
         if (is_null($offset)) {
             $this->dataList[] = $value;
-        } else {
-            $this->dataList[$offset] = $value;
+
+            return;
         }
+
+        $this->dataList[$offset] = $value;
     }
 
     public function offsetUnset($offset)
@@ -135,8 +155,9 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
     public function seek($offset)
     {
         $this->position = $offset;
+
         if (!$this->valid()) {
-            throw new \OutOfBoundsException("Invalid seek offset ($offset).");
+            throw new OutOfBoundsException("Invalid seek offset ($offset).");
         }
     }
 
@@ -151,32 +172,47 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
 
         if ($value instanceof Entity) {
             return $value;
-        } else if (is_array($value)) {
-            $this->dataList[$offset] = $this->buildEntityFromArray($value);
-        } else {
-            return null;
         }
 
-        return $this->dataList[$offset];
+        if (is_array($value)) {
+            $this->dataList[$offset] = $this->buildEntityFromArray($value);
+
+            return $this->dataList[$offset];
+        }
+
+        return null;
     }
 
     protected function buildEntityFromArray(array $dataArray)
     {
+        if (!$this->entityFactory) {
+            throw new RuntimeException("Can't build from array. EntityFactory was not passed to the constructor.");
+        }
+
         $entity = $this->entityFactory->create($this->entityType);
+
         if ($entity) {
             $entity->set($dataArray);
+
             if ($this->isFetched) {
                 $entity->setAsFetched();
             }
+
             return $entity;
         }
     }
 
-    public function getEntityType()
+    /**
+     * Get an entity type.
+     */
+    public function getEntityType() : ?string
     {
         return $this->entityType;
     }
 
+    /**
+     * @deprecated
+     */
     public function getEntityName()
     {
         return $this->entityType;
@@ -187,9 +223,13 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
         return $this->dataList;
     }
 
+    /**
+     * Merge with another collection.
+     */
     public function merge(EntityCollection $collection)
     {
         $newData = $this->dataList;
+
         $incomingDataList = $collection->getDataList();
 
         foreach ($incomingDataList as $v) {
@@ -199,17 +239,22 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
         }
     }
 
-    public function contains($value)
+    /**
+     * Whether a collection contains a specific item.
+     */
+    public function contains($value) : bool
     {
         if ($this->indexOf($value) !== false) {
             return true;
         }
+
         return false;
     }
 
     public function indexOf($value)
     {
         $index = 0;
+
         if (is_array($value)) {
             foreach ($this->dataList as $v) {
                 if (is_array($v)) {
@@ -221,6 +266,7 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
                         return $index;
                     }
                 }
+
                 $index ++;
             }
         } else if ($value instanceof Entity) {
@@ -234,43 +280,75 @@ class EntityCollection implements \Iterator, \Countable, \ArrayAccess, \Seekable
                         return $index;
                     }
                 }
+
                 $index ++;
             }
         }
+
         return false;
     }
 
-    public function toArray($itemsAsObjects = false)
+    /**
+     * @deprecated
+     */
+    public function toArray(bool $itemsAsObjects = false) : array
     {
         $arr = [];
+
         foreach ($this as $entity) {
             if ($itemsAsObjects) {
                 $item = $entity->getValueMap();
             } else {
                 $item = $entity->toArray();
             }
+
             $arr[] = $item;
         }
+
         return $arr;
     }
 
-    public function getValueMapList()
+    public function getValueMapList() : array
     {
         return $this->toArray(true);
     }
 
+    /**
+     * Mark as fetched from DB.
+     */
     public function setAsFetched()
     {
         $this->isFetched = true;
     }
 
+    /**
+     * Mark as not fetched from DB.
+     */
     public function setAsNotFetched()
     {
         $this->isFetched = false;
     }
 
-    public function isFetched()
+    /**
+     * Is fetched from DB.
+     */
+    public function isFetched() : bool
     {
         return $this->isFetched;
+    }
+
+    public static function fromSthCollection(SthCollection $sthCollection) : self
+    {
+        $entityList = [];
+
+        foreach ($sthCollection as $entity) {
+            $entityList[] = $entity;
+        }
+
+        $obj = new EntityCollection($entityList, $sthCollection->getEntityType());
+
+        $obj->setAsFetched();
+
+        return $obj;
     }
 }

@@ -29,66 +29,70 @@
 
 namespace Espo\Repositories;
 
-use Espo\ORM\Entity;
+use Espo\ORM\{
+    Entity,
+    Collection,
+};
 
-class Import extends \Espo\Core\ORM\Repositories\RDB
+class Import extends \Espo\Core\Repositories\Database
 {
-    public function findRelated(Entity $entity, $relationName, array $params = array())
+    public function findRelated(Entity $entity, string $relationName, ?array $params = [])
     {
         $entityType = $entity->get('entityType');
 
-        if (empty($params['customJoin'])) {
-            $params['customJoin'] = '';
-        }
-        $params['customJoin'] .= $this->getRelatedJoin($entity, $relationName);
+        $params = $params ?? [];
+
+        $this->addImportEntityJoin($entity, $relationName, $params);
 
         return $this->getEntityManager()->getRepository($entityType)->find($params);
     }
 
-    protected function getRelatedJoin(Entity $entity, $link)
+    protected function addImportEntityJoin(Entity $entity, string $link, array &$params)
     {
         $entityType = $entity->get('entityType');
-        $pdo = $this->getEntityManager()->getPDO();
-        $table = $this->getEntityManager()->getQuery()->toDb($this->getEntityManager()->getQuery()->sanitize($entityType));
 
-        $part = "0";
+        $param = null;
+
         switch ($link) {
             case 'imported':
-                $part = "import_entity.is_imported = 1";
+                $param = 'isImported';
                 break;
             case 'duplicates':
-                $part = "import_entity.is_duplicate = 1";
+                $param = 'isDuplicate';
                 break;
             case 'updated':
-                $part = "import_entity.is_updated = 1";
+                $param = 'isUpdated';
                 break;
+            default:
+                return;
         }
 
+        $params['joins'] = $params['joins'] ?? [];
 
-        $sql = "
-            JOIN import_entity ON
-                import_entity.import_id = " . $pdo->quote($entity->id) . " AND
-                import_entity.entity_type = " . $pdo->quote($entity->get('entityType')) . " AND
-                import_entity.entity_id = " . $table . ".id AND
-                ".$part."
-        ";
-
-        return $sql;
+        $params['joins'][] = [
+            'ImportEntity',
+            'importEntity',
+            [
+                'importEntity.importId' => $entity->id,
+                'importEntity.entityType' => $entityType,
+                'importEntity.entityId:' => 'id',
+                'importEntity.' . $param => true,
+            ],
+        ];
     }
 
-    public function countRelated(Entity $entity, $relationName, array $params = array())
+    public function countRelated(Entity $entity, string $relationName, ?array $params = null) : int
     {
         $entityType = $entity->get('entityType');
 
-        if (empty($params['customJoin'])) {
-            $params['customJoin'] = '';
-        }
-        $params['customJoin'] .= $this->getRelatedJoin($entity, $relationName);
+        $params = $params ?? [];
+
+        $this->addImportEntityJoin($entity, $relationName, $params);
 
         return $this->getEntityManager()->getRepository($entityType)->count($params);
     }
 
-    protected function afterRemove(Entity $entity, array $options = array())
+    protected function afterRemove(Entity $entity, array $options = [])
     {
         if ($entity->get('fileId')) {
             $attachment = $this->getEntityManager()->getEntity('Attachment', $entity->get('fileId'));
@@ -97,15 +101,16 @@ class Import extends \Espo\Core\ORM\Repositories\RDB
             }
         }
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "DELETE FROM import_entity WHERE import_id = :importId";
-        $sth = $pdo->prepare($sql);
-        $sth->bindValue(':importId', $entity->id);
-        $sth->execute();
+        $delete = $this->getEntityManager()->getQueryBuilder()
+            ->delete()
+            ->from('ImportEntity')
+            ->where([
+                'importId' => $entity->id,
+            ])
+            ->build();
+
+        $this->getEntityManager()->getQueryExecutor()->execute($delete);
 
         parent::afterRemove($entity, $options);
-
     }
-
 }
-

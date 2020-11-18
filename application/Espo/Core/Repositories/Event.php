@@ -32,21 +32,29 @@ namespace Espo\Core\Repositories;
 use Espo\ORM\Entity;
 use Espo\Core\Utils\Util;
 
-class Event extends \Espo\Core\ORM\Repositories\RDB
+use Espo\Core\Di;
+
+class Event extends Database implements
+    Di\DateTimeAware,
+    Di\ConfigAware
 {
+    use Di\DateTimeSetter;
+    use Di\ConfigSetter;
+
     protected $reminderDateAttribute = 'dateStart';
 
     protected $reminderSkippingStatusList = ['Held', 'Not Held'];
 
-    protected function init()
+    protected $preserveDuration = true;
+
+    protected function getConfig()
     {
-        parent::init();
-        $this->addDependency('dateTime');
+        return $this->config;
     }
 
     protected function getDateTime()
     {
-        return $this->getInjection('dateTime');
+        return $this->dateTime;
     }
 
     protected function beforeSave(Entity $entity, array $options = [])
@@ -86,7 +94,13 @@ class Event extends \Espo\Core\ORM\Repositories\RDB
         }
 
         if (!$entity->isNew()) {
-            if ($entity->isAttributeChanged('dateStart') && $entity->isAttributeChanged('dateStart') && !$entity->isAttributeChanged('dateEnd')) {
+            if (
+                $this->preserveDuration
+                &&
+                $entity->isAttributeChanged('dateStart') && $entity->get('dateStart')
+                &&
+                $entity->isAttributeChanged('dateStart') && !$entity->isAttributeChanged('dateEnd')
+            ) {
                 $dateEndPrevious = $entity->getFetched('dateEnd');
                 $dateStartPrevious = $entity->getFetched('dateStart');
                 if ($dateStartPrevious && $dateEndPrevious) {
@@ -107,19 +121,20 @@ class Event extends \Espo\Core\ORM\Repositories\RDB
         parent::beforeSave($entity, $options);
     }
 
-    protected function afterRemove(Entity $entity, array $options = array())
+    protected function afterRemove(Entity $entity, array $options = [])
     {
         parent::afterRemove($entity, $options);
 
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            DELETE FROM `reminder`
-            WHERE
-                entity_id = ".$pdo->quote($entity->id)." AND
-                entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                deleted = 0
-        ";
-        $pdo->query($sql);
+        $delete = $this->getEntityManager()->getQueryBuilder()
+            ->delete()
+            ->from('Reminder')
+            ->where([
+                'entityId' => $entity->id,
+                'entityType' => $entity->getEntityType(),
+            ])
+            ->build();
+
+        $this->getEntityManager()->getQueryExecutor()->execute($delete);
     }
 
     protected function afterSave(Entity $entity, array $options = [])
@@ -138,8 +153,6 @@ class Event extends \Espo\Core\ORM\Repositories\RDB
             $entity->isAttributeChanged($this->reminderDateAttribute) ||
             $entity->has('reminders')
         ) {
-            $pdo = $this->getEntityManager()->getPDO();
-
             $reminderTypeList = $this->getMetadata()->get('entityDefs.Reminder.fields.type.options');
 
             if (!$entity->has('reminders')) {
@@ -149,14 +162,17 @@ class Event extends \Espo\Core\ORM\Repositories\RDB
             }
 
             if (!$entity->isNew()) {
-                $sql = "
-                    DELETE FROM `reminder`
-                    WHERE
-                        entity_id = ".$pdo->quote($entity->id)." AND
-                        entity_type = ".$pdo->quote($entity->getEntityType())." AND
-                        deleted = 0
-                ";
-                $pdo->query($sql);
+                $query = $this->getEntityManager()->getQueryBuilder()
+                    ->delete()
+                    ->from('Reminder')
+                    ->where([
+                        'entityId' => $entity->id,
+                        'entityType' => $entity->getEntityType(),
+                        'deleted' => false,
+                    ])
+                    ->build();
+
+                $this->getEntityManager()->getQueryExecutor()->execute($query);
             }
 
             if (empty($reminderList) || !is_array($reminderList)) return;
@@ -199,67 +215,66 @@ class Event extends \Espo\Core\ORM\Repositories\RDB
                 foreach ($userIdList as $userId) {
                     $id = Util::generateId();
 
-                    $sql = "
-                        INSERT
-                        INTO `reminder`
-                        (id, entity_id, entity_type, `type`, user_id, remind_at, start_at, `seconds`)
-                        VALUES (
-                            ".$pdo->quote($id).",
-                            ".$pdo->quote($entity->id).",
-                            ".$pdo->quote($entityType).",
-                            ".$pdo->quote($type).",
-                            ".$pdo->quote($userId).",
-                            ".$pdo->quote($remindAt->format('Y-m-d H:i:s')).",
-                            ".$pdo->quote($dateValue).",
-                            ".$pdo->quote($seconds)."
-                        )
-                    ";
-                    $pdo->query($sql);
+                    $query = $this->getEntityManager()->getQueryBuilder()
+                        ->insert()
+                        ->into('Reminder')
+                        ->columns(['id', 'entityId', 'entityType', 'type', 'userId', 'remindAt', 'startAt', 'seconds'])
+                        ->values([
+                            'id' => $id,
+                            'entityId' => $entity->id,
+                            'entityType' => $entityType,
+                            'type' => $type,
+                            'userId' => $userId,
+                            'remindAt' => $remindAt->format('Y-m-d H:i:s'),
+                            'startAt' => $dateValue,
+                            'seconds' => $seconds,
+                        ])
+                        ->build();
+
+                    $this->getEntityManager()->getQueryExecutor()->execute($query);
                 }
             }
         }
     }
 
-    public function getEntityReminderList(Entity $entity)
+    public function getEntityReminderList(Entity $entity) : array
     {
-        $pdo = $this->getEntityManager()->getPDO();
-        $reminderList = [];
+        $reminderDataList = [];
 
-        $sql = "
-            SELECT DISTINCT `seconds`, `type`
-            FROM `reminder`
-            WHERE
-                `entity_type` = ".$pdo->quote($entity->getEntityType())." AND
-                `entity_id` = ".$pdo->quote($entity->id)." AND
-                `deleted` = 0
-            ORDER BY `seconds` ASC
-        ";
+        $reminderCollection = $this->getEntityManager()->getRepository('Reminder')
+            ->select(['seconds', 'type'])
+            ->where([
+                'entityType' => $entity->getEntityType(),
+                'entityId' => $entity->id,
+            ])
+            ->distinct()
+            ->order('seconds')
+            ->find();
 
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        $rows = $sth->fetchAll(\PDO::FETCH_ASSOC);
-
-        foreach ($rows as $row) {
-            $o = new \StdClass();
-            $o->seconds = intval($row['seconds']);
-            $o->type = $row['type'];
-            $reminderList[] = $o;
+        foreach ($reminderCollection as $reminder) {
+            $o = (object) [
+                'seconds' => $reminder->get('seconds'),
+                'type' => $reminder->get('type'),
+            ];
+            $reminderDataList[] = $o;
         }
 
-        return $reminderList;
+        return $reminderDataList;
     }
 
     protected function convertDateTimeToDefaultTimezone($string)
     {
-        $dateTime = \DateTime::createFromFormat($this->getDateTime()->getInternalDateTimeFormat(), $string);
-        $timeZone = $this->getConfig()->get('timeZone');
-        if (empty($timeZone)) {
-            $timeZone = 'UTC';
-        }
-        $tz = $timezone = new \DateTimeZone($timeZone);
+        $timeZone = $this->getConfig()->get('timeZone') ?? 'UTC';
 
-        if ($dateTime) {
-            return $dateTime->setTimezone($tz)->format($this->getDateTime()->getInternalDateTimeFormat());
+        $tz = new \DateTimeZone($timeZone);
+
+        try {
+            $dt = \DateTime::createFromFormat($this->getDateTime()->getInternalDateTimeFormat(), $string, $tz);
+        } catch (\Exception $e) {}
+
+        if ($dt) {
+            $utcTz = new \DateTimeZone('UTC');
+            return $dt->setTimezone($utcTz)->format($this->getDateTime()->getInternalDateTimeFormat());
         }
         return null;
     }

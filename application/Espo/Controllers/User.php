@@ -29,10 +29,10 @@
 
 namespace Espo\Controllers;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\Error;
+use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Exceptions\Forbidden;
+use Espo\Core\Exceptions\BadRequest;
 
 class User extends \Espo\Core\Controllers\Record
 {
@@ -69,29 +69,7 @@ class User extends \Espo\Core\Controllers\Record
             throw new BadRequest();
         }
 
-        if ($this->getConfig()->get('passwordRecoveryDisabled')) {
-            throw new Forbidden("Password recovery disabled");
-        }
-
-        $request = $this->getEntityManager()->getRepository('PasswordChangeRequest')->where([
-            'requestId' => $data->requestId
-        ])->findOne();
-
-        if (!$request) {
-            throw new Forbidden();
-        }
-
-        $userId = $request->get('userId');
-        if (!$userId) {
-            throw new Error();
-        }
-
-        if ($this->getService('User')->changePassword($userId, $data->password)) {
-            $this->getEntityManager()->removeEntity($request);
-            return [
-                'url' => $request->get('url')
-            ];
-        }
+        return $this->getService('User')->changePasswordByRequest($data->requestId, $data->password);
     }
 
     public function postActionPasswordChangeRequest($params, $data, $request)

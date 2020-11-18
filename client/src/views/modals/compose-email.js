@@ -70,8 +70,13 @@ define('views/modals/compose-email', 'views/modals/edit', function (Dep) {
                 this.once('after:render', function () {
                     this.actionClose();
                 }, this);
+
                 return;
             }
+
+            this.once('remove', function () {
+                this.dialogIsHidden = false;
+            }, this);
         },
 
         createRecordView: function (model, callback) {
@@ -99,22 +104,56 @@ define('views/modals/compose-email', 'views/modals/edit', function (Dep) {
             var model = editView.model;
 
             var afterSend = function () {
+                this.dialogIsHidden = false;
+
                 this.trigger('after:save', model);
                 this.trigger('after:send', model);
-                dialog.close();
-            };
 
-            editView.once('after:send', afterSend, this);
+                dialog.close();
+
+                this.stopListening(editView, 'before:save', beforeSave);
+                this.stopListening(editView, 'error:save', errorSave);
+
+                this.remove();
+            }.bind(this);
+
+            var beforeSave = function () {
+                this.dialogIsHidden = true;
+
+                dialog.hideWithBackdrop();
+
+                editView.setConfirmLeaveOut(false);
+
+                if (!this.forceRemoveIsInitiated) {
+                    this.initiateForceRemove();
+                }
+            }.bind(this);
+
+            var errorSave = function () {
+                this.dialogIsHidden = false;
+
+                if (this.isRendered()) {
+                    dialog.show();
+                }
+            }.bind(this);
+
+            this.listenToOnce(editView, 'after:send', afterSend);
 
             this.disableButton('send');
             this.disableButton('saveDraft');
 
-            editView.once('cancel:save', function () {
+            this.listenToOnce(editView, 'cancel:save', function () {
                 this.enableButton('send');
                 this.enableButton('saveDraft');
 
-                editView.off('after:save', afterSend);
+                this.stopListening(editView, 'after:send', afterSend);
+
+                this.stopListening(editView, 'before:save', beforeSave);
+                this.stopListening(editView, 'error:save', errorSave);
             }, this);
+
+            this.listenToOnce(editView, 'before:save', beforeSave);
+            this.listenToOnce(editView, 'error:save', errorSave);
 
             editView.send();
         },
@@ -149,6 +188,24 @@ define('views/modals/compose-email', 'views/modals/edit', function (Dep) {
             }, this);
 
             editView.saveDraft();
+        },
+
+        initiateForceRemove: function () {
+            this.forceRemoveIsInitiated = true;
+
+            var parentView = this.getParentView();
+
+            if (!parentView) {
+                return true;
+            }
+
+            parentView.once('remove', function () {
+                if (!this.dialogIsHidden) {
+                    return;
+                }
+
+                this.remove();
+            }, this);
         },
 
     });

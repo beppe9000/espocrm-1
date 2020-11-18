@@ -33,19 +33,251 @@ class Phone extends Base
 {
     protected function load($fieldName, $entityType)
     {
-        $foreignJoinAlias = "{$fieldName}{$entityType}Foreign";
-        $foreignJoinMiddleAlias = "{$fieldName}{$entityType}ForeignMiddle";
+        $foreignJoinAlias = "{$fieldName}{$entityType}{alias}Foreign";
+        $foreignJoinMiddleAlias = "{$fieldName}{$entityType}{alias}ForeignMiddle";
+
+        $mainFieldDefs = [
+            'type' => 'varchar',
+            'select' => [
+                "select" => "phoneNumbers.name",
+                'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
+            ],
+            'selectForeign' => [
+                "select" => "{$foreignJoinAlias}.name",
+                'leftJoins' => [
+                    [
+                        'EntityPhoneNumber',
+                        $foreignJoinMiddleAlias,
+                        [
+                            "{$foreignJoinMiddleAlias}.entityId:" => "{alias}.id",
+                            "{$foreignJoinMiddleAlias}.primary" => 1,
+                            "{$foreignJoinMiddleAlias}.deleted" => 0,
+                        ]
+                    ],
+                    [
+                        'PhoneNumber',
+                        $foreignJoinAlias,
+                        [
+                            "{$foreignJoinAlias}.id:" => "{$foreignJoinMiddleAlias}.phoneNumberId",
+                            "{$foreignJoinAlias}.deleted" => 0,
+                        ]
+                    ]
+                ],
+            ],
+            'fieldType' => 'phone',
+            'where' => [
+                'LIKE' => [
+                    'whereClause' => [
+                        'id=s' => [
+                            'from' => 'EntityPhoneNumber',
+                            'select' => ['entityId'],
+                            'joins' => [
+                                [
+                                    'phoneNumber',
+                                    'phoneNumber',
+                                    [
+                                        'phoneNumber.id:' => 'phoneNumberId',
+                                        'phoneNumber.deleted' => false,
+                                    ],
+                                ],
+                            ],
+                            'whereClause' => [
+                                'deleted' => false,
+                                'entityType' => $entityType,
+                                'phoneNumber.name*' => '{value}',
+                            ],
+                        ],
+                    ],
+                ],
+                'NOT LIKE' => [
+                    'whereClause' => [
+                        'id!=s' => [
+                            'from' => 'EntityPhoneNumber',
+                            'select' => ['entityId'],
+                            'joins' => [
+                                [
+                                    'phoneNumber',
+                                    'phoneNumber',
+                                    [
+                                        'phoneNumber.id:' => 'phoneNumberId',
+                                        'phoneNumber.deleted' => false,
+                                    ],
+                                ],
+                            ],
+                            'whereClause' => [
+                                'deleted' => false,
+                                'entityType' => $entityType,
+                                'phoneNumber.name*' => '{value}',
+                            ],
+                        ],
+                    ],
+                ],
+                '=' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                '<>' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name!=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'IN' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'NOT IN' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name!=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'IS NULL' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name=' => null,
+                    ],
+                    'distinct' => true
+                ],
+                'IS NOT NULL' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.name!=' => null,
+                    ],
+                    'distinct' => true
+                ],
+            ],
+            'order' => [
+                'order' => [
+                    ['phoneNumbers.name', '{direction}'],
+                ],
+                'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
+                'additionalSelect' => ['phoneNumbers.name'],
+            ],
+        ];
+
+        $numbericFieldDefs = [
+            'type' => 'varchar',
+            'notStorable' => true,
+            'notExportable' => true,
+            'where' => [
+                'LIKE' => [
+                    'whereClause' => [
+                        'id=s' => [
+                            'from' => 'EntityPhoneNumber',
+                            'select' => ['entityId'],
+                            'joins' => [
+                                [
+                                    'phoneNumber',
+                                    'phoneNumber',
+                                    [
+                                        'phoneNumber.id:' => 'phoneNumberId',
+                                        'phoneNumber.deleted' => false,
+                                    ],
+                                ],
+                            ],
+                            'whereClause' => [
+                                'deleted' => false,
+                                'entityType' => $entityType,
+                                'phoneNumber.numeric*' => '{value}',
+                            ],
+                        ],
+                    ],
+                ],
+                'NOT LIKE' => [
+                    'whereClause' => [
+                        'id!=s' => [
+                            'from' => 'EntityPhoneNumber',
+                            'select' => ['entityId'],
+                            'joins' => [
+                                [
+                                    'phoneNumber',
+                                    'phoneNumber',
+                                    [
+                                        'phoneNumber.id:' => 'phoneNumberId',
+                                        'phoneNumber.deleted' => false,
+                                    ],
+                                ]
+                            ],
+                            'whereClause' => [
+                                'deleted' => false,
+                                'entityType' => $entityType,
+                                'phoneNumber.numeric*' => '{value}',
+                            ],
+                        ],
+                    ],
+                ],
+                '=' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                '<>' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric!=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'IN' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'NOT IN' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric!=' => '{value}',
+                    ],
+                    'distinct' => true
+                ],
+                'IS NULL' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric=' => null,
+                    ],
+                    'distinct' => true
+                ],
+                'IS NOT NULL' => [
+                    'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
+                    'whereClause' => [
+                        'phoneNumbersMultiple.numeric!=' => null,
+                    ],
+                    'distinct' => true
+                ],
+            ],
+        ];
 
         return [
             $entityType => [
                 'fields' => [
-                    $fieldName => array(
+                    $fieldName => $mainFieldDefs,
+                    $fieldName . 'Data' => [
+                        'type' => 'text',
+                        'notStorable' => true,
+                        'notExportable' => true,
+                    ],
+                    $fieldName .'IsOptedOut' => [
+                        'type' => 'bool',
+                        'notStorable' => true,
                         'select' => [
-                            'sql' => 'phoneNumbers.name',
+                            'select' => 'phoneNumbers.optOut',
                             'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
                         ],
                         'selectForeign' => [
-                            'sql' => "{$foreignJoinAlias}.name",
+                            'select' => "{$foreignJoinAlias}.optOut",
                             'leftJoins' => [
                                 [
                                     'EntityPhoneNumber',
@@ -53,6 +285,7 @@ class Phone extends Base
                                     [
                                         "{$foreignJoinMiddleAlias}.entityId:" => "{alias}.id",
                                         "{$foreignJoinMiddleAlias}.primary" => 1,
+                                        "{$foreignJoinMiddleAlias}.deleted" => 0,
                                     ]
                                 ],
                                 [
@@ -60,135 +293,47 @@ class Phone extends Base
                                     $foreignJoinAlias,
                                     [
                                         "{$foreignJoinAlias}.id:" => "{$foreignJoinMiddleAlias}.phoneNumberId",
+                                        "{$foreignJoinAlias}.deleted" => 0,
                                     ]
                                 ]
                             ],
                         ],
-                        'fieldType' => 'phone',
-                        'where' =>
-                        array (
-                            'LIKE' => \Espo\Core\Utils\Util::toUnderScore($entityType) . ".id IN (
-                                SELECT entity_id
-                                FROM entity_phone_number
-                                JOIN phone_number ON phone_number.id = entity_phone_number.phone_number_id
-                                WHERE
-                                    entity_phone_number.deleted = 0 AND entity_phone_number.entity_type = '{$entityType}' AND
-                                    phone_number.deleted = 0 AND phone_number.name LIKE {value}
-                            )",
-                            '=' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name = {value}',
-                                'distinct' => true
-                            ),
-                            '<>' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name <> {value}',
-                                'distinct' => true
-                            ),
-                            'IN' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name IN {value}',
-                                'distinct' => true
-                            ),
-                            'NOT IN' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name NOT IN {value}',
-                                'distinct' => true
-                            ),
-                            'IS NULL' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name IS NULL',
-                                'distinct' => true
-                            ),
-                            'IS NOT NULL' => array(
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersMultiple']],
-                                'sql' => 'phoneNumbersMultiple.name IS NOT NULL',
-                                'distinct' => true
-                            )
-                        ),
-                        'orderBy' => [
-                            'sql' => 'phoneNumbers.name {direction}',
-                            'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
-                        ],
-                    ),
-                    $fieldName .'Data' => array(
-                        'type' => 'text',
-                        'notStorable' => true,
-                        'notExportable' => true,
-                    ),
-                    $fieldName .'IsOptedOut' => [
-                        'type' => 'bool',
-                        'notStorable' => true,
-                        'select' => 'phoneNumbers.opt_out',
                         'where' => [
                             '= TRUE' => [
-                                'sql' => 'phoneNumbers.opt_out = true AND phoneNumbers.opt_out IS NOT NULL',
+                                'whereClause' => [
+                                    ['phoneNumbers.optOut=' => true],
+                                    ['phoneNumbers.optOut!=' => null],
+                                ],
                                 'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
                             ],
                             '= FALSE' => [
-                                'sql' => 'phoneNumbers.opt_out = false OR phoneNumbers.opt_out IS NULL',
+                                'whereClause' => [
+                                    'OR' => [
+                                        ['phoneNumbers.optOut=' => false],
+                                        ['phoneNumbers.optOut=' => null],
+                                    ]
+                                ],
                                 'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
                             ]
                         ],
-                        'orderBy' => 'phoneNumbers.opt_out {direction}'
-                    ],
-                    $fieldName . 'Numeric' => [
-                        'type' => 'varchar',
-                        'notStorable' => true,
-                        'notExportable' => true,
-                        'where' => [
-                            'LIKE' => \Espo\Core\Utils\Util::toUnderScore($entityType) . ".id IN (
-                                SELECT entity_id
-                                FROM entity_phone_number
-                                JOIN phone_number ON phone_number.id = entity_phone_number.phone_number_id
-                                WHERE
-                                    entity_phone_number.deleted = 0 AND entity_phone_number.entity_type = '{$entityType}' AND
-                                    phone_number.deleted = 0 AND phone_number.numeric LIKE {value}
-                            )",
-                            '=' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric = {value}',
-                                'distinct' => true
+                       'order' => [
+                            'order' => [
+                                ['phoneNumbers.optOut', '{direction}'],
                             ],
-                            '<>' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric <> {value}',
-                                'distinct' => true
-                            ],
-                            'IN' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric IN {value}',
-                                'distinct' => true
-                            ],
-                            'NOT IN' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric NOT IN {value}',
-                                'distinct' => true
-                            ],
-                            'IS NULL' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric IS NULL',
-                                'distinct' => true
-                            ],
-                            'IS NOT NULL' => [
-                                'leftJoins' => [['phoneNumbers', 'phoneNumbersNumericMultiple']],
-                                'sql' => 'phoneNumbersNumericMultiple.numeric IS NOT NULL',
-                                'distinct' => true
-                            ]
+                            'leftJoins' => [['phoneNumbers', 'phoneNumbers', ['primary' => 1]]],
+                            'additionalSelect' => ['phoneNumbers.optOut'],
                         ],
-                    ]
+                    ],
+                    $fieldName . 'Numeric' => $numbericFieldDefs,
                 ],
                 'relations' => [
                     'phoneNumbers' => [
                         'type' => 'manyMany',
                         'entity' => 'PhoneNumber',
                         'relationName' => 'entityPhoneNumber',
-                        'midKeys' => [
-                            'entityId',
-                            'phoneNumberId'
-                        ],
+                        'midKeys' => ['entityId', 'phoneNumberId'],
                         'conditions' => [
-                            'entityType' => $entityType
+                            'entityType' => $entityType,
                         ],
                         'additionalColumns' => [
                             'entityType' => [
@@ -198,11 +343,11 @@ class Phone extends Base
                             'primary' => [
                                 'type' => 'bool',
                                 'default' => false
-                            ]
-                        ]
-                    ]
-                ]
-            ]
+                            ],
+                        ],
+                    ],
+                ],
+            ],
         ];
     }
 }

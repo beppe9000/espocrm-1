@@ -21,10 +21,11 @@
 
  /**
   * * `grunt` - full build
-  * * `grunt dev` - build only items needed for development
-  * * `grunt offline` - skips *composer install*
+  * * `grunt dev` - build only items needed for development (takes less time)
+  * * `grunt offline` - build but skip *composer install*
   * * `grant release` - full build plus upgrade packages`
-  * * `grant tests` - build and run tests
+  * * `grant test` - build for test running
+  * * `grant run-tests` - build and run unit and integratino tests
   */
 
 module.exports = function (grunt) {
@@ -48,6 +49,7 @@ module.exports = function (grunt) {
         'client/lib/bull.js',
         'client/lib/marked.min.js',
         'client/lib/autobahn.js',
+        'client/lib/gridstack.all.js',
 
         'client/src/namespace.js',
         'client/src/exceptions.js',
@@ -210,6 +212,7 @@ module.exports = function (grunt) {
                     'daemon.php',
                     'rebuild.php',
                     'clear_cache.php',
+                    'preload.php',
                     'upgrade.php',
                     'extension.php',
                     'websocket.php',
@@ -287,8 +290,8 @@ module.exports = function (grunt) {
                 },
                 files: [
                     {
-                        src: 'build/tmp/application/Espo/Core/defaults/config.php',
-                        dest: 'build/tmp/application/Espo/Core/defaults/config.php'
+                        src: 'build/tmp/application/Espo/Resources/defaults/config.php',
+                        dest: 'build/tmp/application/Espo/Resources/defaults/config.php'
                     }
                 ]
             }
@@ -300,19 +303,23 @@ module.exports = function (grunt) {
     });
 
     grunt.registerTask("composer", function() {
-        cp.execSync("composer install", {stdio: 'ignore'});
+        cp.execSync("composer install --ignore-platform-reqs --no-dev", {stdio: 'ignore'});
+    });
+
+    grunt.registerTask("composer-dev", function() {
+        cp.execSync("composer install --ignore-platform-reqs", {stdio: 'ignore'});
     });
 
     grunt.registerTask("upgrade", function() {
         cp.execSync("node diff --all --vendor", {stdio: 'inherit'});
     });
 
-    grunt.registerTask("unit-tests", function() {
-        cp.execSync("phpunit --bootstrap=vendor/autoload.php tests/unit", {stdio: 'inherit'});
+    grunt.registerTask("unit-tests-run", function() {
+        cp.execSync("vendor/bin/phpunit --bootstrap=./vendor/autoload.php ./tests/unit", {stdio: 'inherit'});
     });
 
-    grunt.registerTask("integration-tests", function() {
-        cp.execSync("phpunit --bootstrap=vendor/autoload.php tests/integration", {stdio: 'inherit'});
+    grunt.registerTask("integration-tests-run", function() {
+        cp.execSync("vendor/bin/phpunit --bootstrap=./vendor/autoload.php ./tests/integration", {stdio: 'inherit'});
     });
 
     grunt.registerTask("zip", function() {
@@ -382,14 +389,29 @@ module.exports = function (grunt) {
         'clean:release',
     ]);
 
-    grunt.registerTask('tests', [
-        'default',
-        'unit-tests',
-        'integration-tests',
+    grunt.registerTask('run-tests', [
+        'test',
+        'unit-tests-run',
+        'integration-tests-run',
+    ]);
+
+    grunt.registerTask('run-unit-tests', [
+        'composer-dev',
+        'unit-tests-run',
+    ]);
+
+    grunt.registerTask('run-integration-tests', [
+        'test',
+        'integration-tests-run',
     ]);
 
     grunt.registerTask('dev', [
-        'composer',
+        'composer-dev',
         'less',
+    ]);
+
+    grunt.registerTask('test', [
+        'composer-dev',
+        'offline',
     ]);
 };

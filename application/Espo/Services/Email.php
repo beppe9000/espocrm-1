@@ -29,37 +29,48 @@
 
 namespace Espo\Services;
 
-use \Espo\ORM\Entity;
-use \Espo\Entities;
+use Laminas\Mail\Message;
 
-use \Espo\Core\Exceptions\Error;
-use \Espo\Core\Exceptions\Forbidden;
-use \Espo\Core\Exceptions\NotFound;
-use \Espo\Core\Exceptions\BadRequest;
+use Espo\{
+    ORM\Entity,
+    Entities,
+};
 
-class Email extends Record
+use Espo\Core\{
+    Exceptions\Error,
+    Exceptions\ErrorSilent,
+    Exceptions\Forbidden,
+    Exceptions\NotFound,
+    Exceptions\BadRequest,
+    Di,
+};
+
+use Exception;
+use Throwable;
+use StdClass;
+
+class Email extends Record implements
+
+    Di\EmailSenderAware,
+    Di\CryptAware,
+    Di\FileStorageManagerAware
 {
-    protected function init()
-    {
-        parent::init();
-        $this->addDependencyList([
-            'container',
-            'preferences',
-            'fileManager',
-            'crypt',
-            'serviceFactory',
-            'fileStorageManager'
-        ]);
-    }
+    use Di\EmailSenderSetter;
+    use Di\CryptSetter;
+    use Di\FileStorageManagerSetter;
 
     private $streamService = null;
 
     protected $getEntityBeforeUpdate = true;
 
-    protected $skipSelectTextAttributes = true;
-
     protected $allowedForUpdateAttributeList = [
-        'parentType', 'parentId', 'parentName', 'teamsIds', 'teamsNames', 'assignedUserId', 'assignedUserName'
+        'parentType',
+        'parentId',
+        'parentName',
+        'teamsIds',
+        'teamsNames',
+        'assignedUserId',
+        'assignedUserName',
     ];
 
     protected $mandatorySelectAttributeList = [
@@ -79,52 +90,32 @@ class Email extends Record
         'messageId',
         'sentById',
         'replyToString',
-        'hasAttachment'
+        'hasAttachment',
     ];
 
     private $fromEmailAddressNameCache = [];
 
-    protected function getFileManager()
-    {
-        return $this->getInjection('fileManager');
-    }
-
     protected function getFileStorageManager()
     {
-        return $this->getInjection('fileStorageManager');
-    }
-
-    protected function getMailSender()
-    {
-        return $this->getInjection('container')->get('mailSender');
-    }
-
-    protected function getPreferences()
-    {
-        return $this->injections['preferences'];
+        return $this->fileStorageManager;
     }
 
     protected function getCrypt()
     {
-        return $this->injections['crypt'];
+        return $this->crypt;
     }
 
-    protected function getServiceFactory()
-    {
-        return $this->injections['serviceFactory'];
-    }
-
-    public function getUserSmtpParams(string $userId)
+    public function getUserSmtpParams(string $userId) : ?array
     {
         $user = $this->getEntityManager()->getEntity('User', $userId);
-        if (!$user) return;
+        if (!$user) return null;
 
         $fromAddress = $user->get('emailAddress');
         if ($fromAddress)
             $fromAddress = strtolower($fromAddress);
 
         $preferences = $this->getEntityManager()->getEntity('Preferences', $user->id);
-        if (!$preferences) return;
+        if (!$preferences) return null;
 
         $smtpParams = $preferences->getSmtpParams();
         if ($smtpParams) {
@@ -153,39 +144,52 @@ class Email extends Record
         return $smtpParams;
     }
 
-    protected function send(Entities\Email $entity)
+    public function sendEntity(Entities\Email $entity, ?Entities\User $user = null)
     {
-        $emailSender = $this->getMailSender();
+        $emailSender = $this->emailSender->create();
 
         $userAddressList = [];
-        foreach ($this->getUser()->get('emailAddresses') as $ea) {
-            $userAddressList[] = $ea->get('lower');
+
+        if ($user) {
+            $emailAddressCollection = $this->entityManager
+                ->getRepository('User')
+                ->getRelation($user, 'emailAddresses')
+                ->find();
+
+            foreach ($emailAddressCollection as $ea) {
+                $userAddressList[] = $ea->get('lower');
+            }
         }
 
-        $primaryUserAddress = strtolower($this->getUser()->get('emailAddress'));
         $fromAddress = strtolower($entity->get('from'));
         $originalFromAddress = $entity->get('from');
 
-        if (empty($fromAddress)) {
-            throw new Error("Can't send with empty from address.");
+        if (!$fromAddress) {
+            throw new Error("Email sending: Can't send with empty 'from' address.");
         }
 
         $inboundEmail = null;
         $emailAccount = null;
 
         $smtpParams = null;
-        if (in_array($fromAddress, $userAddressList)) {
+
+        if ($user && in_array($fromAddress, $userAddressList)) {
+            $primaryUserAddress = strtolower($user->get('emailAddress'));
+
             if ($primaryUserAddress === $fromAddress) {
-                $smtpParams = $this->getPreferences()->getSmtpParams();
-                if ($smtpParams) {
-                    if (array_key_exists('password', $smtpParams)) {
-                        $smtpParams['password'] = $this->getCrypt()->decrypt($smtpParams['password']);
+                $preferences = $this->getEntityManager()->getEntity('Preferences', $user->id);
+                if ($preferences) {
+                    $smtpParams = $preferences->getSmtpParams();
+                    if ($smtpParams) {
+                        if (array_key_exists('password', $smtpParams)) {
+                            $smtpParams['password'] = $this->getCrypt()->decrypt($smtpParams['password']);
+                        }
                     }
                 }
             }
 
             $emailAccountService = $this->getServiceFactory()->create('EmailAccount');
-            $emailAccount = $emailAccountService->findAccountForUser($this->getUser(), $originalFromAddress);
+            $emailAccount = $emailAccountService->findAccountForUser($user, $originalFromAddress);
 
             if (!$smtpParams) {
                 if ($emailAccount && $emailAccount->get('useSmtp')) {
@@ -193,45 +197,55 @@ class Email extends Record
                 }
             }
             if ($smtpParams) {
-                $smtpParams['fromName'] = $this->getUser()->get('name');
+                $smtpParams['fromName'] = $user->get('name');
             }
         }
 
-        if ($smtpParams) {
-            if ($fromAddress) {
-                $this->applySmtpHandler($this->getUser()->id, $fromAddress, $smtpParams);
+        if ($user) {
+            if ($smtpParams) {
+                if ($fromAddress) {
+                    $this->applySmtpHandler($user->id, $fromAddress, $smtpParams);
+                }
+
+                $emailSender->withSmtpParams($smtpParams);
             }
-            $emailSender->useSmtp($smtpParams);
         }
 
         if (!$smtpParams) {
             $inboundEmailService = $this->getServiceFactory()->create('InboundEmail');
-            $inboundEmail = $inboundEmailService->findSharedAccountForUser($this->getUser(), $originalFromAddress);
+
+            if ($user) {
+                $inboundEmail = $inboundEmailService->findSharedAccountForUser($user, $originalFromAddress);
+            } else {
+                $inboundEmail = $inboundEmailService->findAccountForSending($originalFromAddress);
+            }
+
             if ($inboundEmail) {
                 $smtpParams = $inboundEmailService->getSmtpParamsFromAccount($inboundEmail);
             }
             if ($smtpParams) {
-                $emailSender->useSmtp($smtpParams);
+                $emailSender->withSmtpParams($smtpParams);
             }
         }
 
         if (!$smtpParams && $fromAddress === strtolower($this->getConfig()->get('outboundEmailFromAddress'))) {
             if (!$this->getConfig()->get('outboundEmailIsShared')) {
-                throw new Error('Can not use system SMTP. System account is not shared.');
+                throw new Error("Email sending: Can not use system SMTP. System SMTP is not shared.");
             }
-            $emailSender->setParams([
-                'fromName' => $this->getConfig()->get('outboundEmailFromName')
+
+            $emailSender->withParams([
+                'fromName' => $this->getConfig()->get('outboundEmailFromName'),
             ]);
         }
 
         if (!$smtpParams && !$this->getConfig()->get('outboundEmailIsShared')) {
-            throw new Error('No SMTP params found for '.$fromAddress.'.');
+            throw new Error("Email sending: No SMTP params found for {$fromAddress}.");
         }
 
         if (!$smtpParams) {
-            if (in_array($fromAddress, $userAddressList)) {
-                $emailSender->setParams([
-                    'fromName' => $this->getUser()->get('name')
+            if ($user && in_array($fromAddress, $userAddressList)) {
+                $emailSender->withParams([
+                    'fromName' => $user->get('name')
                 ]);
             }
         }
@@ -239,8 +253,10 @@ class Email extends Record
         $params = [];
 
         $parent = null;
+
         if ($entity->get('parentType') && $entity->get('parentId')) {
             $parent = $this->getEntityManager()->getEntity($entity->get('parentType'), $entity->get('parentId'));
+
             if ($parent) {
                 if ($entity->get('parentType') == 'Case') {
                     if ($parent->get('inboundEmailId')) {
@@ -253,16 +269,29 @@ class Email extends Record
             }
         }
 
-        $message = new \Zend\Mail\Message();
-
         $this->validateEmailAddresses($entity);
 
+        $message = new Message();
+
         try {
-            $emailSender->send($entity, $params, $message);
-        } catch (\Exception $e) {
-            $entity->set('status', 'Failed');
+            $emailSender
+                ->withParams($params)
+                ->withMessage($message)
+                ->send($entity);
+        }
+        catch (Exception $e) {
+            $entity->set('status', 'Draft');
+
             $this->getEntityManager()->saveEntity($entity, ['silent' => true]);
-            throw new Error($e->getMessage(), $e->getCode());
+
+            $GLOBALS['log']->error("Email sending:" . $e->getMessage() . "; " . $e->getCode());
+
+            $errorData = [
+                'id' => $entity->id,
+                'message' => $e->getMessage(),
+            ];
+
+            throw ErrorSilent::createWithBody('sendingFail', json_encode($errorData));
         }
 
         $this->getEntityManager()->saveEntity($entity, ['isJustSent' => true]);
@@ -275,18 +304,27 @@ class Email extends Record
                     try {
                         $inboundEmailService = $this->getServiceFactory()->create('InboundEmail');
                         $inboundEmailService->storeSentMessage($inboundEmail, $message);
-                    } catch (\Exception $e) {
-                        $GLOBALS['log']->error("Could not store sent email (Group Email Account {$inboundEmail->id}): " . $e->getMessage());
+                    }
+                    catch (Exception $e) {
+                        $GLOBALS['log']->error(
+                            "Email sending: Could not store sent email (Group Email Account {$inboundEmail->id}): " .
+                            $e->getMessage() . "."
+                        );
                     }
                 }
             } else if ($emailAccount) {
                 $entity->addLinkMultipleId('emailAccounts', $emailAccount->id);
+
                 if ($emailAccount->get('storeSentEmails')) {
                     try {
                         $emailAccountService = $this->getServiceFactory()->create('EmailAccount');
                         $emailAccountService->storeSentMessage($emailAccount, $message);
-                    } catch (\Exception $e) {
-                        $GLOBALS['log']->error("Could not store sent email (Email Account {$emailAccount->id}): " . $e->getMessage());
+                    }
+                    catch (Exception $e) {
+                        $GLOBALS['log']->error(
+                            "Email sending: Could not store sent email (Email Account {$emailAccount->id}): " .
+                            $e->getMessage() . "."
+                        );
                     }
                 }
             }
@@ -306,19 +344,23 @@ class Email extends Record
                 if (isset($smtpHandlers->$emailAddress)) {
                     $handlerClassName = $smtpHandlers->$emailAddress;
                     try {
-                        $handler = $this->getInjection('injectableFactory')->createByClassName($handlerClassName);
-                    } catch (\Throwable $e) {
-                        $GLOBALS['log']->error("Send Email: Could not create Smtp Handler for {$emailAddress}. Error: " . $e->getMessage());
+                        $handler = $this->getInjection('injectableFactory')->create($handlerClassName);
+                    }
+                    catch (Throwable $e) {
+                        $GLOBALS['log']->error(
+                            "Email sending: Could not create Smtp Handler for {$emailAddress}. Error: " . $e->getMessage() . "."
+                        );
                     }
                     if (method_exists($handler, 'applyParams')) {
                         $handler->applyParams($userId, $emailAddress, $params);
+                        return;
                     }
                 }
             }
         }
     }
 
-    public function validateEmailAddresses(\Espo\Entities\Email $entity)
+    public function validateEmailAddresses(Entities\Email $entity)
     {
         $from = $entity->get('from');
         if ($from) {
@@ -354,12 +396,12 @@ class Email extends Record
         return $this->streamService;
     }
 
-    public function create($data)
+    public function create(StdClass $data) : Entity
     {
         $entity = parent::create($data);
 
         if ($entity && $entity->get('status') == 'Sending') {
-            $this->send($entity);
+            $this->sendEntity($entity, $this->getUser());
         }
 
         return $entity;
@@ -376,7 +418,7 @@ class Email extends Record
     protected function afterUpdateEntity(Entity $entity, $data)
     {
         if ($entity && $entity->get('status') == 'Sending') {
-            $this->send($entity);
+            $this->sendEntity($entity, $this->getUser());
         }
 
         $this->loadAdditionalFields($entity);
@@ -413,11 +455,11 @@ class Email extends Record
         $this->getEntityManager()->getRepository('Email')->loadReplyToField($entity);
     }
 
-    public function getEntity($id = null)
+    public function getEntity(?string $id = null) : ?Entity
     {
         $entity = parent::getEntity($id);
 
-        if (!empty($entity) && !empty($id) && !$entity->get('isRead')) {
+        if ($entity && $id && !$entity->get('isRead')) {
             $this->markAsRead($entity->id);
         }
 
@@ -495,193 +537,218 @@ class Email extends Record
         return true;
     }
 
-    public function markAllAsRead($userId = null)
+    public function markAllAsRead(?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET is_read = 1
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
 
-        $sql = "
-            UPDATE notification SET `read` = 1
-            WHERE
-                `deleted` = 0 AND
-                `type` = 'EmailReceived' AND
-                `related_type` = 'Email' AND
-                `read` = 0 AND
-                `user_id` = " . $pdo->quote($userId) . "
-        ";
-        $pdo->query($sql);
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['isRead' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'isRead' => false,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('Notification')
+            ->set(['read' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'relatedType' => 'Email',
+                'read' => false,
+                'type' => 'EmailReceived',
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
 
         return true;
     }
 
-    public function markAsRead($id, $userId = null)
+    public function markAsRead(string $id, ?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET is_read = 1
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['isRead' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
 
         $this->markNotificationAsRead($id, $userId);
 
         return true;
     }
 
-    public function markAsNotRead($id, $userId = null)
+    public function markAsNotRead(string $id, ?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET is_read = 0
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['isRead' => false])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+
         return true;
     }
 
-    public function markAsImportant($id, $userId = null)
+    public function markAsImportant(string $id, ?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET is_important = 1
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['isImportant' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+
         return true;
     }
 
-    public function markAsNotImportant($id, $userId = null)
+    public function markAsNotImportant(string $id, ?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET is_important = 0
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['isImportant' => false])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+
         return true;
     }
 
-    public function moveToTrash($id, $userId = null)
+    public function moveToTrash(string $id, ?string $userId = null)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET in_trash = 1
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $userId = $userId ?? $this->getUser()->id;
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['inTrash' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
 
         $this->markNotificationAsRead($id, $userId);
 
         return true;
     }
 
-    public function markNotificationAsRead($id, $userId)
+    public function retrieveFromTrash(string $id, ?string $userId = null)
     {
-        $pdo = $this->getEntityManager()->getPDO();
+        $userId = $userId ?? $this->getUser()->id;
 
-        $sql = "
-            UPDATE notification SET `read` = 1
-            WHERE
-                `deleted` = 0 AND
-                `type` = 'EmailReceived' AND
-                `related_type` = 'Email' AND
-                `related_id` = " . $pdo->quote($id) ." AND
-                `read` = 0 AND
-                `user_id` = " . $pdo->quote($userId) . "
-        ";
-        $pdo->query($sql);
-    }
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set(['inTrash' => false])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
 
-    public function retrieveFromTrash($id, $userId = null)
-    {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET in_trash = 0
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+        $this->entityManager->getQueryExecutor()->execute($update);
+
         return true;
     }
 
-    public function moveToFolder($id, $folderId, $userId = null)
+    public function markNotificationAsRead(string $id, string $userId)
     {
-        if (!$userId) {
-            $userId = $this->getUser()->id;
-        }
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('Notification')
+            ->set(['read' => true])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'relatedType' => 'Email',
+                'relatedId' => $id,
+                'read' => false,
+                'type' => 'EmailReceived',
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+    }
+
+    public function moveToFolder(string $id, ?string $folderId, ?string $userId = null)
+    {
+        $userId = $userId ?? $this->getUser()->id;
+
         if ($folderId === 'inbox') {
             $folderId = null;
         }
-        $pdo = $this->getEntityManager()->getPDO();
-        $sql = "
-            UPDATE email_user SET folder_id = " . $this->getEntityManager()->getQuery()->quote($folderId) . "
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($userId) . " AND
-                email_id = " . $pdo->quote($id) . "
-        ";
-        $pdo->query($sql);
+
+        $update = $this->entityManager->getQueryBuilder()->update()
+            ->in('EmailUser')
+            ->set([
+                'folderId' => $folderId,
+                'inTrash' => false,
+            ])
+            ->where([
+                'deleted' => false,
+                'userId' => $userId,
+                'emailId' => $id,
+            ])
+            ->build();
+
+        $this->entityManager->getQueryExecutor()->execute($update);
+
         return true;
     }
 
-    static public function parseFromName($string)
+    static public function parseFromName(?string $string) : string
     {
         $fromName = '';
+
         if ($string) {
             if (stripos($string, '<') !== false) {
                 $fromName = trim(preg_replace('/(<.*>)/', '', $string), '" ');
             }
         }
+
         return $fromName;
     }
 
-    static public function parseFromAddress($string)
+    static public function parseFromAddress(?string $string) : string
     {
         $fromAddress = '';
+
         if ($string) {
             if (stripos($string, '<') !== false) {
                 if (preg_match('/<(.*)>/', $string, $matches)) {
@@ -691,6 +758,7 @@ class Email extends Record
                 $fromAddress = $string;
             }
         }
+
         return $fromAddress;
     }
 
@@ -699,81 +767,98 @@ class Email extends Record
         parent::loadAdditionalFieldsForList($entity);
 
         $userEmailAdddressIdList = [];
-        foreach ($this->getUser()->get('emailAddresses') as $ea) {
+
+        $eaCollection = $this->entityManager
+            ->getRepository('User')
+            ->getRelation($this->getUser(), 'emailAddresses')
+            ->find();
+
+        foreach ($eaCollection as $ea) {
             $userEmailAdddressIdList[] = $ea->id;
         }
 
-        $status = $entity->get('status');
-        if (in_array($entity->get('fromEmailAddressId'), $userEmailAdddressIdList) || $entity->get('createdById') === $this->getUser()->id) {
+        if (
+            in_array($entity->get('fromEmailAddressId'), $userEmailAdddressIdList) ||
+            $entity->get('createdById') === $this->getUser()->id
+        ) {
             $entity->loadLinkMultipleField('toEmailAddresses');
             $idList = $entity->get('toEmailAddressesIds');
             $names = $entity->get('toEmailAddressesNames');
 
             if (!empty($idList)) {
                 $arr = [];
+
                 foreach ($idList as $emailAddressId) {
-                    $person = $this->getEntityManager()->getRepository('EmailAddress')->getEntityByAddressId($emailAddressId, null, true);
+                    $person = $this->getEntityManager()->getRepository('EmailAddress')
+                        ->getEntityByAddressId($emailAddressId, null, true);
                     if ($person) {
                         $arr[] = $person->get('name');
                     } else {
                         $arr[] = $names->$emailAddressId;
                     }
                 }
+
                 $entity->set('personStringData', 'To: ' . implode(', ', $arr));
             }
-        } else {
-            $fromEmailAddressId = $entity->get('fromEmailAddressId');
-            if (!empty($fromEmailAddressId)) {
-                if (!array_key_exists($fromEmailAddressId, $this->fromEmailAddressNameCache)) {
-                    $person = $this->getEntityManager()->getRepository('EmailAddress')->getEntityByAddressId($fromEmailAddressId, null, true);
-                    if ($person) {
-                        $fromName = $person->get('name');
-                    } else {
-                        $fromName = null;
-                    }
-                    $this->fromEmailAddressNameCache[$fromEmailAddressId] = $fromName;
-                }
-                $fromName = $this->fromEmailAddressNameCache[$fromEmailAddressId];
 
-                if (!$fromName) {
-                    $fromName = $entity->get('fromName');
-                    if (!$fromName) {
-                        $fromName = $entity->get('fromEmailAddressName');
-                    }
-                }
+            return;
+        }
 
-                $entity->set('personStringData', $fromName);
+        $fromEmailAddressId = $entity->get('fromEmailAddressId');
+
+        if (empty($fromEmailAddressId)) {
+            return;
+        }
+
+        if (!array_key_exists($fromEmailAddressId, $this->fromEmailAddressNameCache)) {
+            $person = $this->getEntityManager()->getRepository('EmailAddress')
+                ->getEntityByAddressId($fromEmailAddressId, null, true);
+
+            if ($person) {
+                $fromName = $person->get('name');
+            } else {
+                $fromName = null;
+            }
+
+            $this->fromEmailAddressNameCache[$fromEmailAddressId] = $fromName;
+        }
+
+        $fromName = $this->fromEmailAddressNameCache[$fromEmailAddressId];
+
+        if (!$fromName) {
+            $fromName = $entity->get('fromName');
+            if (!$fromName) {
+                $fromName = $entity->get('fromEmailAddressName');
             }
         }
+
+        $entity->set('personStringData', $fromName);
     }
 
     public function loadUserColumnFields(Entity $entity)
     {
-        $pdo = $this->getEntityManager()->getPDO();
+        $emailUser = $this->entityManager->getRepository('EmailUser')
+            ->select(['isRead', 'isImportant', 'inTrash'])
+            ->where([
+                'deleted' => false,
+                'userId' => $this->getUser()->id,
+                'emailId' => $entity->id,
+            ])
+            ->findOne();
 
-        $sql = "
-            SELECT is_read AS 'isRead', is_important AS 'isImportant', in_trash AS 'inTrash' FROM email_user
-            WHERE
-                deleted = 0 AND
-                user_id = " . $pdo->quote($this->getUser()->id) . " AND
-                email_id = " . $pdo->quote($entity->id) . "
-        ";
-
-        $sth = $pdo->prepare($sql);
-        $sth->execute();
-        if ($row = $sth->fetch(\PDO::FETCH_ASSOC)) {
-            $isRead = !empty($row['isRead']) ? true : false;
-            $isImportant = !empty($row['isImportant']) ? true : false;
-            $inTrash = !empty($row['inTrash']) ? true : false;
-
-            $entity->set('isRead', $isRead);
-            $entity->set('isImportant', $isImportant);
-            $entity->set('inTrash', $inTrash);
-        } else {
+        if (!$emailUser) {
             $entity->set('isRead', null);
             $entity->clear('isImportant');
             $entity->clear('inTrash');
+
+            return;
         }
+
+        $entity->set([
+            'isRead' => $emailUser->get('isRead'),
+            'isImportant' => $emailUser->get('isImportant'),
+            'inTrash' => $emailUser->get('inTrash'),
+        ]);
     }
 
     public function loadNameHash(Entity $entity, array $fieldList = ['from', 'to', 'cc', 'bcc', 'replyTo'])
@@ -781,15 +866,15 @@ class Email extends Record
         $this->getEntityManager()->getRepository('Email')->loadNameHash($entity, $fieldList);
     }
 
-    public function copyAttachments($emailId, $parentType, $parentId)
+    public function copyAttachments(string $emailId, ?string $parentType, ?string $parentId)
     {
         return $this->getCopiedAttachments($emailId, $parentType, $parentId);
     }
 
-    public function getCopiedAttachments($id, $parentType = null, $parentId = null)
+    public function getCopiedAttachments(string $id, ?string $parentType = null, ?string $parentId = null)
     {
         $ids = [];
-        $names = new \stdClass();
+        $names = (object) [];
 
         if (empty($id)) {
             throw new BadRequest();
@@ -823,7 +908,7 @@ class Email extends Record
 
                 if ($this->getFileStorageManager()->isFile($source)) {
                     $this->getEntityManager()->saveEntity($attachment);
-                    $contents = $this->getFileStorageManager()->getContents($source);
+                    $contents = $this->getFileStorageManager()->getContents($source) ?? '';
                     $this->getFileStorageManager()->putContents($attachment, $contents);
                     $ids[] = $attachment->id;
                     $names->{$attachment->id} = $attachment->get('name');
@@ -837,14 +922,14 @@ class Email extends Record
         ];
     }
 
-    public function sendTestEmail($data)
+    public function sendTestEmail(array $data)
     {
         $smtpParams = $data;
 
         if (empty($smtpParams['auth'])) {
             unset($smtpParams['username']);
             unset($smtpParams['password']);
-            unset($smtpParams['smtpAuthMechanism']);
+            unset($smtpParams['authMechanism']);
         }
 
         $userId = $data['userId'] ?? null;
@@ -864,14 +949,47 @@ class Email extends Record
             'to' => $data['emailAddress'],
         ]);
 
+        $type = $data['type'] ?? null;
+        $id = $data['id'] ?? null;
+
+        if ($type === 'emailAccount' && $id) {
+            $emailAccount = $this->getEntityManager()->getEntity('EmailAccount', $id);
+
+            if ($emailAccount && $emailAccount->get('smtpHandler')) {
+                $this->getServiceFactory()->create('EmailAccount')->applySmtpHandler($emailAccount, $smtpParams);
+            }
+        }
+
+        if ($type === 'inboundEmail' && $id) {
+            $inboundEmail = $this->getEntityManager()->getEntity('InboundEmail', $id);
+
+            if ($inboundEmail && $inboundEmail->get('smtpHandler')) {
+                $this->getServiceFactory()->create('InboundEmail')->applySmtpHandler($inboundEmail, $smtpParams);
+            }
+        }
+
         if ($userId) {
             if ($fromAddress) {
                 $this->applySmtpHandler($userId, $fromAddress, $smtpParams);
             }
         }
 
-        $emailSender = $this->getMailSender();
-        $emailSender->useSmtp($smtpParams)->send($email);
+        $emailSender = $this->emailSender;
+
+        try {
+            $emailSender
+                ->withSmtpParams($smtpParams)
+                ->send($email);
+        }
+        catch (Exception $e) {
+            $GLOBALS['log']->warning("Email sending:" . $e->getMessage() . "; " . $e->getCode());
+
+            $errorData = [
+                'message' => $e->getMessage(),
+            ];
+
+            throw ErrorSilent::createWithBody('sendingFail', json_encode($errorData));
+        }
 
         return true;
     }
@@ -931,7 +1049,13 @@ class Email extends Record
 
         $folderIdList = ['inbox', 'drafts'];
 
-        $emailFolderList = $this->getEntityManager()->getRepository('EmailFolder')->where(['assignedUserId' => $this->getUser()->id])->find();
+        $emailFolderList = $this->getEntityManager()
+            ->getRepository('EmailFolder')
+            ->where([
+                'assignedUserId' => $this->getUser()->id,
+            ])
+            ->find();
+
         foreach ($emailFolderList as $folder) {
             $folderIdList[] = $folder->id;
         }
@@ -942,20 +1066,24 @@ class Email extends Record
             } else {
                 $folderSelectParams = $selectParams;
             }
+
             $selectManager->applyFolder($folderId, $folderSelectParams);
             $selectManager->addUsersJoin($folderSelectParams);
-            $data[$folderId] = $this->getEntityManager()->getRepository('Email')->count($folderSelectParams);
+
+            $data[$folderId] = $this->getEntityManager()
+                ->getRepository('Email')
+                ->count($folderSelectParams);
         }
 
         return $data;
     }
 
-    public function isPermittedAssignedUser(Entity $entity)
+    public function isPermittedAssignedUser(Entity $entity) : bool
     {
         return true;
     }
 
-    public function isPermittedAssignedUsers(Entity $entity)
+    public function isPermittedAssignedUsers(Entity $entity) : bool
     {
         return true;
     }

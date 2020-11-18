@@ -32,8 +32,13 @@ namespace Espo\Modules\Crm\Repositories;
 use Espo\ORM\Entity;
 use Espo\Core\Utils\Util;
 
-class Meeting extends \Espo\Core\Repositories\Event
+use Espo\Core\Di;
+
+class Meeting extends \Espo\Core\Repositories\Event implements Di\ConfigAware, Di\UserAware
 {
+    use Di\ConfigSetter;
+    use Di\UserSetter;
+
     protected function beforeSave(Entity $entity, array $options = [])
     {
         if (!$entity->isNew() && $entity->isAttributeChanged('parentId')) {
@@ -45,18 +50,25 @@ class Meeting extends \Espo\Core\Repositories\Event
 
         if ($entity->isAttributeChanged('parentId') || $entity->isAttributeChanged('parentType')) {
             $parent = null;
+
             if ($parentId && $parentType) {
                 if ($this->getEntityManager()->hasRepository($parentType)) {
                     $columnList = ['id', 'name'];
+
                     if ($this->getEntityManager()->getMetadata()->get($parentType, ['fields', 'accountId'])) {
                         $columnList[] = 'accountId';
                     }
+
                     if ($parentType === 'Lead') {
                         $columnList[] = 'status';
                         $columnList[] = 'createdAccountId';
                         $columnList[] = 'createdAccountName';
                     }
-                    $parent = $this->getEntityManager()->getRepository($parentType)->select($columnList)->get($parentId);
+
+                    $parent = $this->getEntityManager()->getRepository($parentType)
+                        ->select($columnList)
+                        ->where(['id' => $parentId])
+                        ->findOne();
                 }
             }
             $accountId = null;
@@ -74,9 +86,13 @@ class Meeting extends \Espo\Core\Repositories\Event
                         }
                     }
                 }
-                if (!$accountId && $parent->get('accountId') && $parent->getRelationParam('account', 'entity') == 'Account') {
+                if (
+                    !$accountId && $parent->get('accountId') &&
+                    $parent->getRelationParam('account', 'entity') == 'Account'
+                ) {
                     $accountId = $parent->get('accountId');
                 }
+
                 if ($accountId) {
                     $entity->set('accountId', $accountId);
                     $entity->set('accountName', $accountName);
@@ -88,7 +104,12 @@ class Meeting extends \Espo\Core\Repositories\Event
                 &&
                 !$entity->get('accountName')
             ) {
-                $account = $this->getEntityManager()->getRepository('Account')->select(['id', 'name'])->get($entity->get('accountId'));
+                $account = $this->getEntityManager()
+                    ->getRepository('Account')
+                    ->select(['id', 'name'])
+                    ->where(['id' => $entity->get('accountId')])
+                    ->findOne();
+
                 if ($account) {
                     $entity->set('accountName', $account->get('name'));
                 }
@@ -97,23 +118,36 @@ class Meeting extends \Espo\Core\Repositories\Event
 
         parent::beforeSave($entity, $options);
 
-        if ($entity->hasLinkMultipleField('assignedUsers')) {
-            $assignedUserIdList = $entity->getLinkMultipleIdList('assignedUsers');
-            foreach ($assignedUserIdList as $assignedUserId) {
-                $entity->addLinkMultipleId('users', $assignedUserId);
-                $entity->setLinkMultipleName('users', $assignedUserId, $entity->getLinkMultipleName('assignedUsers', $assignedUserId));
-            }
-        } else {
-            $assignedUserId = $entity->get('assignedUserId');
-            if ($assignedUserId) {
-                $entity->addLinkMultipleId('users', $assignedUserId);
-                $entity->setLinkMultipleName('users', $assignedUserId, $entity->get('assignedUserName'));
+        if (!$this->config->get('eventAssignedUserIsAttendeeDisabled')) {
+            if ($entity->hasLinkMultipleField('assignedUsers')) {
+                $assignedUserIdList = $entity->getLinkMultipleIdList('assignedUsers');
+
+                foreach ($assignedUserIdList as $assignedUserId) {
+                    $entity->addLinkMultipleId('users', $assignedUserId);
+                    $entity->setLinkMultipleName('users', $assignedUserId,
+                        $entity->getLinkMultipleName('assignedUsers', $assignedUserId)
+                    );
+                }
+            } else {
+                $assignedUserId = $entity->get('assignedUserId');
+                if ($assignedUserId) {
+                    $entity->addLinkMultipleId('users', $assignedUserId);
+                    $entity->setLinkMultipleName('users', $assignedUserId, $entity->get('assignedUserName'));
+                }
             }
         }
 
         if ($entity->isNew()) {
-            $currentUserId = $this->getEntityManager()->getUser()->id;
-            if ($entity->hasLinkMultipleId('users', $currentUserId)) {
+            $currentUserId = $this->user->id;
+            if (
+                $entity->hasLinkMultipleId('users', $currentUserId)
+                &&
+                (
+                    !$entity->getLinkMultipleColumn('users', 'status', $currentUserId)
+                    ||
+                    $entity->getLinkMultipleColumn('users', 'status', $currentUserId) === 'None'
+                )
+            ) {
                 $entity->setLinkMultipleColumn('users', 'status', $currentUserId, 'Accepted');
             }
         }

@@ -29,366 +29,256 @@
 
 namespace Espo\Core;
 
+use Espo\Core\{
+    Exceptions\Error,
+    InjectableFactory,
+    Loaders\Loader,
+    Binding\BindingContainer,
+};
+
+use ReflectionClass;
+
+/**
+ * DI container for services. Lazy initialization is used. Services are instantiated only once.
+ *
+ * See https://docs.espocrm.com/development/di/.
+ */
 class Container
 {
-
     private $data = [];
 
-    public function __construct()
-    {
+    private $classCache = [];
+
+    private $loaderClassNames;
+
+    protected $configuration = null;
+
+    protected $injectableFactory;
+
+    public function __construct(
+        string $configurationClassName,
+        array $loaderClassNames = [],
+        array $services = [],
+        ?BindingContainer $bindingContainer = null
+    ) {
+        $this->loaderClassNames = $loaderClassNames;
+
+        foreach ($services as $name => $service) {
+            if (!is_string($name) || !is_object($service)) {
+                throw new Error("Container: Bad service passed.");
+            }
+
+            $this->setForced($name, $service);
+        }
+
+        $this->bindingContainer = $bindingContainer;
+
+        $this->injectableFactory = $this->get('injectableFactory');
+
+        $this->configuration = $this->injectableFactory->create($configurationClassName);
     }
 
-    public function get(string $name)
+    /**
+     * Obtain a service object.
+     */
+    public function get(string $name) : object
     {
-        if (empty($this->data[$name])) {
+        if (!$this->isSet($name)) {
             $this->load($name);
-        }
-        if (isset($this->data[$name])) {
-            return $this->data[$name];
-        }
-        return null;
-    }
 
-    protected function set($name, $obj)
-    {
-        $this->data[$name] = $obj;
-    }
-
-    private function load($name)
-    {
-        $loadMethod = 'load' . ucfirst($name);
-        if (method_exists($this, $loadMethod)) {
-            $obj = $this->$loadMethod();
-            $this->data[$name] = $obj;
-        } else {
-            $metadata = $this->get('metadata');
-
-            try {
-                $className = $metadata->get(['app', 'containerServices', $name, 'loaderClassName']);
-                if (!$className) {
-                    $className = $metadata->get(['app', 'loaders', ucfirst($name)]);
-                }
-            } catch (\Exception $e) {}
-
-            if (!isset($className) || !class_exists($className)) {
-                $className = '\Espo\Custom\Core\Loaders\\'.ucfirst($name);
-                if (!class_exists($className)) {
-                    $className = '\Espo\Core\Loaders\\'.ucfirst($name);
-                }
-            }
-
-            $object = null;
-
-            if (class_exists($className)) {
-                $loadClass = new $className($this);
-                $object = $loadClass->load();
-                $this->data[$name] = $object;
-            } else {
-                $className = $this->getServiceClassName($name);
-
-                if ($className && class_exists($className)) {
-
-                    $dependencyList = $metadata->get(['app', 'containerServices', $name, 'dependencyList']) ?? [];
-                    $dependencyObjectList = [];
-                    foreach ($dependencyList as $item) {
-                        $dependencyObjectList[] = $this->get($item);
-                    }
-                    $reflector = new \ReflectionClass($className);
-                    if ($reflector->isSubclassOf('\\Espo\\Core\\Interfaces\\InjectableService')) {
-                        $object = $reflector->newInstance();
-                        foreach ($dependencyObjectList as $i => $item) {
-                            $object->inject($dependencyList[$i], $item);
-                        }
-                    } else {
-                        $object = $reflector->newInstanceArgs($dependencyObjectList);
-                    }
-                    $this->data[$name] = $object;
-                }
+            if (!$this->isSet($name)) {
+                throw new Error("Could not load '{$name}' service.");
             }
         }
 
-        return null;
+        return $this->data[$name];
     }
 
-    public function getServiceClassName(string $name, ?string $default = null)
+    /**
+     * Check whether a service can be obtained.
+     */
+    public function has(string $name) : bool
     {
-        $metadata = $this->get('metadata');
+        if ($this->isSet($name)) {
+            return true;
+        }
 
-        $className = $metadata->get(['app', 'containerServices',  $name, 'className']) ??
-            $metadata->get(['app', 'serviceContainer', 'classNames',  $name], $default);
+        if (array_key_exists($name, $this->loaderClassNames)) {
+            return true;
+        }
 
-        return $className;
+        $loadMethodName = 'load' . ucfirst($name);
+
+        if (method_exists($this, $loadMethodName)) {
+            return true;
+        }
+
+        if (!$this->configuration) {
+            return false;
+        }
+
+        if ($this->configuration->getLoaderClassName($name)) {
+            return true;
+        }
+
+        if ($this->configuration->getServiceClassName($name)) {
+            return true;
+        }
+
+        return false;
     }
 
-    protected function loadContainer()
+    protected function isSet(string $name) : bool
+    {
+        return isset($this->data[$name]);
+    }
+
+    private function initClass(string $name)
+    {
+        if ($this->isSet($name)) {
+            $object = $this->get($name);
+
+            $this->classCache[$name] = new ReflectionClass($object);
+
+            return;
+        }
+
+        $loadMethodName = 'load' . ucfirst($name);
+
+        if (method_exists($this, $loadMethodName)) {
+            $loaderClass = new ReflectionClass($this);
+
+            $loadMethod = $loaderClass->getMethod($loadMethodName);
+
+            $className = $loadMethod->getReturnType()->getName();
+
+            $this->classCache[$name] = new ReflectionClass($className);
+
+            return;
+        }
+
+        $loaderClassName = $this->getLoaderClassName($name);
+
+        if ($loaderClassName) {
+            $loaderClass = new ReflectionClass($loaderClassName);
+
+            $loadMethod = $loaderClass->getMethod('load');
+
+            if (!$loadMethod->hasReturnType()) {
+                throw new Error("Loader method for service '{$name}' does not have a return type.");
+            }
+
+            $className = $loadMethod->getReturnType()->getName();
+
+            $this->classCache[$name] = new ReflectionClass($className);
+
+            return;
+        }
+
+        $className = $this->configuration->getServiceClassName($name);
+
+        $this->classCache[$name] = new ReflectionClass($className);
+    }
+
+    /**
+     * Get a class of a service.
+     */
+    public function getClass(string $name) : ReflectionClass
+    {
+        if (!$this->has($name)) {
+            throw new Error("Service '{$name}' does not exist.");
+        }
+
+        if (!isset($this->classCache[$name])) {
+            $this->initClass($name);
+        }
+
+        return $this->classCache[$name];
+    }
+
+    /**
+     * Set a service object. Must be configured as settable.
+     */
+    public function set(string $name, object $object)
+    {
+        if (!$this->configuration->isSettable($name)) {
+            throw new Error("Service '{$name}' is not settable.");
+        }
+
+        $this->setForced($name, $object);
+    }
+
+    protected function setForced(string $name, object $object)
+    {
+        $this->data[$name] = $object;
+    }
+
+    private function getLoader(string $name) : ?Loader
+    {
+        $loaderClassName = $this->getLoaderClassName($name);
+
+        if (!$loaderClassName) {
+            return null;
+        }
+
+        return $this->injectableFactory->create($loaderClassName);
+    }
+
+    private function getLoaderClassName(string $name) : ?string
+    {
+        return $this->loaderClassNames[$name] ?? $this->configuration->getLoaderClassName($name);
+    }
+
+    private function load(string $name)
+    {
+        $loadMethodName = 'load' . ucfirst($name);
+
+        if (method_exists($this, $loadMethodName)) {
+            $this->data[$name] = $this->$loadMethodName();
+
+            return;
+        }
+
+        $loader = $this->getLoader($name);
+
+        if ($loader) {
+            $this->data[$name] = $loader->load();
+
+            return;
+        }
+
+        $className = $this->configuration->getServiceClassName($name);
+
+        if (!$className || !class_exists($className)) {
+            throw new Error("Could not load '{$name}' service.");
+        }
+
+        $dependencyList = $this->configuration->getServiceDependencyList($name);
+
+        if (!is_null($dependencyList)) {
+            $dependencyObjectList = [];
+
+            foreach ($dependencyList as $item) {
+                $dependencyObjectList[] = $this->get($item);
+            }
+
+            $reflector = new ReflectionClass($className);
+
+            $this->data[$name] = $reflector->newInstanceArgs($dependencyObjectList);
+
+            return;
+        }
+
+        $this->data[$name] = $this->injectableFactory->create($className);
+    }
+
+    protected function loadContainer() : Container
     {
         return $this;
     }
 
-    protected function loadSlim()
+    protected function loadInjectableFactory() : InjectableFactory
     {
-        return new \Espo\Core\Utils\Api\Slim();
-    }
-
-    protected function loadFileStorageManager()
-    {
-        return new \Espo\Core\FileStorage\Manager(
-            $this->get('metadata')->get(['app', 'fileStorage', 'implementationClassNameMap']),
-            $this
-        );
-    }
-
-    protected function loadLog()
-    {
-        $config = $this->get('config');
-
-        $path = $config->get('logger.path', 'data/logs/espo.log');
-        $rotation = $config->get('logger.rotation', true);
-
-        $log = new \Espo\Core\Utils\Log('Espo');
-        $levelCode = $log::toMonologLevel($config->get('logger.level', 'WARNING'));
-
-        if ($rotation) {
-            $maxFileNumber = $config->get('logger.maxFileNumber', 30);
-            $handler = new \Espo\Core\Utils\Log\Monolog\Handler\RotatingFileHandler($path, $maxFileNumber, $levelCode);
-        } else {
-            $handler = new \Espo\Core\Utils\Log\Monolog\Handler\StreamHandler($path, $levelCode);
-        }
-        $log->pushHandler($handler);
-
-        $errorHandler = new \Monolog\ErrorHandler($log);
-        $errorHandler->registerExceptionHandler(null, false);
-        $errorHandler->registerErrorHandler([], false);
-
-        return $log;
-    }
-
-    protected function loadFileManager()
-    {
-        return new \Espo\Core\Utils\File\Manager(
-            $this->get('config')
-        );
-    }
-
-    protected function loadControllerManager()
-    {
-        return new \Espo\Core\ControllerManager(
-            $this
-        );
-    }
-
-    protected function loadPreferences()
-    {
-        return $this->get('entityManager')->getEntity('Preferences', $this->get('user')->id);
-    }
-
-    protected function loadConfig()
-    {
-        return new \Espo\Core\Utils\Config(
-            new \Espo\Core\Utils\File\Manager()
-        );
-    }
-
-    protected function loadHookManager()
-    {
-        return new \Espo\Core\HookManager(
-            $this
-        );
-    }
-
-    protected function loadOutput()
-    {
-        return new \Espo\Core\Utils\Api\Output(
-            $this->get('slim')
-        );
-    }
-
-    protected function loadDateTime()
-    {
-        return new \Espo\Core\Utils\DateTime(
-            $this->get('config')->get('dateFormat'),
-            $this->get('config')->get('timeFormat'),
-            $this->get('config')->get('timeZone'),
-            $this->get('config')->get('language')
-        );
-    }
-
-    protected function loadNumber()
-    {
-        return new \Espo\Core\Utils\NumberUtil(
-            $this->get('config')->get('decimalMark'),
-            $this->get('config')->get('thousandSeparator')
-        );
-    }
-
-    protected function loadServiceFactory()
-    {
-        return new \Espo\Core\ServiceFactory(
-            $this
-        );
-    }
-
-    protected function loadNotificatorFactory()
-    {
-        return new \Espo\Core\NotificatorFactory(
-            $this
-        );
-    }
-
-    protected function loadMetadata()
-    {
-        return new \Espo\Core\Utils\Metadata(
-            $this->get('fileManager'),
-            $this->get('config')->get('useCache')
-        );
-    }
-
-    protected function loadLayout()
-    {
-        return new \Espo\Core\Utils\Layout(
-            $this->get('fileManager'),
-            $this->get('metadata'),
-            $this->get('user')
-        );
-    }
-
-    protected function loadAclManager()
-    {
-        $className = $this->getServiceClassName('acl', '\\Espo\\Core\\AclManager');
-        return new $className(
-            $this->get('container')
-        );
-    }
-
-    protected function loadInternalAclManager()
-    {
-        $className = $this->getServiceClassName('acl', '\\Espo\\Core\\AclManager');
-        return new $className(
-            $this->get('container')
-        );
-    }
-
-    protected function loadAcl()
-    {
-        $className = $this->getServiceClassName('acl', '\\Espo\\Core\\Acl');
-        return new $className(
-            $this->get('aclManager'),
-            $this->get('user')
-        );
-    }
-
-    protected function loadSchema()
-    {
-        return new \Espo\Core\Utils\Database\Schema\Schema(
-            $this->get('config'),
-            $this->get('metadata'),
-            $this->get('fileManager'),
-            $this->get('entityManager'),
-            $this->get('classParser'),
-            $this->get('ormMetadata')
-        );
-    }
-
-    protected function loadOrmMetadata()
-    {
-        return new \Espo\Core\Utils\Metadata\OrmMetadata(
-            $this->get('metadata'),
-            $this->get('fileManager'),
-            $this->get('config')
-        );
-    }
-
-    protected function loadClassParser()
-    {
-        return new \Espo\Core\Utils\File\ClassParser(
-            $this->get('fileManager'),
-            $this->get('config'),
-            $this->get('metadata')
-        );
-    }
-
-    protected function loadLanguage()
-    {
-        return new \Espo\Core\Utils\Language(
-            \Espo\Core\Utils\Language::detectLanguage($this->get('config'), $this->get('preferences')),
-            $this->get('fileManager'),
-            $this->get('metadata'),
-            $this->get('config')->get('useCache')
-        );
-    }
-
-    protected function loadBaseLanguage()
-    {
-        return new \Espo\Core\Utils\Language(
-            'en_US',
-            $this->get('fileManager'),
-            $this->get('metadata'),
-            $this->get('config')->get('useCache')
-        );
-    }
-
-    protected function loadDefaultLanguage()
-    {
-        return new \Espo\Core\Utils\Language(
-            \Espo\Core\Utils\Language::detectLanguage($this->get('config')),
-            $this->get('fileManager'),
-            $this->get('metadata'),
-            $this->get('config')->get('useCache')
-        );
-    }
-
-    protected function loadCrypt()
-    {
-        return new \Espo\Core\Utils\Crypt(
-            $this->get('config')
-        );
-    }
-
-    protected function loadScheduledJob()
-    {
-        return new \Espo\Core\Utils\ScheduledJob(
-            $this
-        );
-    }
-
-    protected function loadDataManager()
-    {
-        return new \Espo\Core\DataManager(
-            $this
-        );
-    }
-
-    protected function loadFieldManager()
-    {
-        return new \Espo\Core\Utils\FieldManager(
-            $this
-        );
-    }
-
-    protected function loadFieldManagerUtil()
-    {
-        return new \Espo\Core\Utils\FieldManagerUtil(
-            $this->get('metadata')
-        );
-    }
-
-    protected function loadThemeManager()
-    {
-        return new \Espo\Core\Utils\ThemeManager(
-            $this->get('config'),
-            $this->get('metadata')
-        );
-    }
-
-    protected function loadInjectableFactory()
-    {
-        return new \Espo\Core\InjectableFactory(
-            $this
-        );
-    }
-
-    public function setUser(\Espo\Entities\User $user)
-    {
-        $this->set('user', $user);
+        return new InjectableFactory($this, $this->bindingContainer);
     }
 }
